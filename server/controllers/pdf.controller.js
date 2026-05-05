@@ -1,433 +1,459 @@
 import PDFDocument from "pdfkit";
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-const MARGIN = 48;
-const PAGE_W = 595.28;
-const PAGE_H = 841.89;
-const USABLE_W = PAGE_W - MARGIN * 2;
+// ─── Layout constants ─────────────────────────────────────────────────────────
+const M      = 48;               // margin
+const PW     = 595.28;           // page width
+const PH     = 841.89;           // page height
+const INNER  = PW - M * 2;      // usable width
 
-const COLORS = {
-  indigo:    "#6366f1",
-  indigoDk:  "#4338ca",
-  purple:    "#8b5cf6",
-  dark:      "#0f0f1a",
-  white:     "#ffffff",
-  gray:      "#64748b",
-  green:     "#22c55e",
-  amber:     "#f59e0b",
-  red:       "#ef4444",
-  cyan:      "#06b6d4",
-  text:      "#1e293b",
-  textMid:   "#475569",
-  border:    "#e2e8f0",
-  chart:     ["#6366f1","#8b5cf6","#06b6d4","#22c55e","#f59e0b","#ef4444"],
+// ─── Colours (ASCII-safe hex strings only) ────────────────────────────────────
+const COL = {
+  indigo:  "#6366f1",
+  indigoDk:"#4338ca",
+  purple:  "#8b5cf6",
+  dark:    "#0f0f1a",
+  green:   "#22c55e",
+  amber:   "#f59e0b",
+  red:     "#ef4444",
+  cyan:    "#06b6d4",
+  text:    "#1e293b",
+  mid:     "#475569",
+  light:   "#94a3b8",
+  bg:      "#f8fafc",
+  bars:    ["#6366f1","#8b5cf6","#06b6d4","#22c55e","#f59e0b","#ef4444"],
 };
 
-// ─── Low-level helpers ────────────────────────────────────────────────────────
-const fillRect = (doc, x, y, w, h, color, r = 0) =>
-  doc.save().roundedRect(x, y, w, h, r).fill(color).restore();
+// ─── Helpers — no method chaining, no Unicode ─────────────────────────────────
 
-const hline = (doc, x1, y, x2, color = COLORS.border, lw = 0.5) =>
-  doc.save().moveTo(x1, y).lineTo(x2, y)
-    .strokeColor(color).lineWidth(lw).stroke().restore();
+function rRect(doc, x, y, w, h, color, r) {
+  doc.save();
+  doc.roundedRect(x, y, w, h, r || 0);
+  doc.fill(color);
+  doc.restore();
+}
+
+function sRect(doc, x, y, w, h, color, lw, r) {
+  doc.save();
+  doc.roundedRect(x, y, w, h, r || 0);
+  doc.lineWidth(lw || 0.5);
+  doc.strokeColor(color);
+  doc.stroke();
+  doc.restore();
+}
+
+// Horizontal line — separate calls, no chaining
+function hl(doc, x1, y, x2, color, lw) {
+  doc.save();
+  doc.moveTo(x1, y);
+  doc.lineTo(x2, y);
+  doc.lineWidth(lw || 0.5);
+  doc.strokeColor(color);
+  doc.stroke();
+  doc.restore();
+}
+
+// Straight line between two points
+function sl(doc, x1, y1, x2, y2, color, lw) {
+  doc.save();
+  doc.moveTo(x1, y1);
+  doc.lineTo(x2, y2);
+  doc.lineWidth(lw || 1);
+  doc.strokeColor(color);
+  doc.stroke();
+  doc.restore();
+}
+
+function txt(doc, str, x, y, color, font, size, opts) {
+  doc.save();
+  doc.fillColor(color);
+  doc.font(font);
+  doc.fontSize(size);
+  doc.text(str, x, y, opts || {});
+  doc.restore();
+}
 
 // ─── Page header ──────────────────────────────────────────────────────────────
-const drawHeader = (doc, topic) => {
-  // dark band
-  fillRect(doc, 0, 0, PAGE_W, 64, COLORS.dark);
-  // indigo bottom strip
-  fillRect(doc, 0, 60, PAGE_W, 4, COLORS.indigo);
-  // logo text
-  doc.fillColor(COLORS.white).font("Helvetica-Bold").fontSize(17)
-    .text("ExamNotes AI", MARGIN, 16, { lineBreak: false });
-  doc.fillColor(COLORS.indigo + "cc").font("Helvetica").fontSize(8.5)
-    .text("AI-powered exam-oriented notes & revision", MARGIN, 38, { lineBreak: false });
-  // topic (right-aligned)
+function hdr(doc, topic) {
+  // Dark band
+  rRect(doc, 0, 0, PW, 66, COL.dark);
+  // Indigo accent strip
+  rRect(doc, 0, 62, PW, 4, COL.indigo);
+
+  // Left: brand name + tagline
+  txt(doc, "ExamCraft", M, 16, "#ffffff", "Helvetica-Bold", 18, { lineBreak: false });
+  txt(doc, "AI-powered exam-oriented notes & revision", M, 40, COL.indigo + "bb", "Helvetica", 8.5, { lineBreak: false });
+
+  // Right: topic + date
+  var date = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
   if (topic) {
-    doc.fillColor("#ffffff55").font("Helvetica").fontSize(8)
-      .text(topic, 0, 20, { align: "right", width: PAGE_W - MARGIN, lineBreak: false });
+    txt(doc, topic, 0, 18, "#ffffff88", "Helvetica", 8, { align: "right", width: PW - M, lineBreak: false });
   }
-  // date (right-aligned)
-  const d = new Date().toLocaleDateString("en-IN",
-    { day: "numeric", month: "short", year: "numeric" });
-  doc.fillColor("#ffffff44").font("Helvetica").fontSize(7.5)
-    .text(d, 0, 36, { align: "right", width: PAGE_W - MARGIN, lineBreak: false });
+  txt(doc, date, 0, 34, "#ffffff55", "Helvetica", 7.5, { align: "right", width: PW - M, lineBreak: false });
 
-  doc.y = 80;
-};
+  doc.y = 82;
+}
 
-// ─── Page footer (called right before adding a new page, or at doc.end) ───────
-const drawFooter = (doc, pageNum) => {
-  const fy = PAGE_H - 34;
-  hline(doc, MARGIN, fy, PAGE_W - MARGIN, COLORS.indigo + "44");
-  doc.fillColor(COLORS.gray).font("Helvetica").fontSize(7.5)
-    .text("Generated by ExamNotes AI", MARGIN, fy + 8, { lineBreak: false });
-  doc.fillColor(COLORS.indigo).font("Helvetica-Bold").fontSize(7.5)
-    .text(`Page ${pageNum}`, 0, fy + 8,
-      { align: "right", width: PAGE_W - MARGIN, lineBreak: false });
-};
+// ─── Page footer ──────────────────────────────────────────────────────────────
+function ftr(doc, n) {
+  var fy = PH - 34;
+  hl(doc, M, fy, PW - M, COL.indigo + "44");
+  txt(doc, "Generated by ExamCraft", M, fy + 8, COL.mid, "Helvetica", 7.5, { lineBreak: false });
+  txt(doc, "Page " + n, 0, fy + 8, COL.indigo, "Helvetica-Bold", 7.5, { align: "right", width: PW - M, lineBreak: false });
+}
 
-// ─── Page break: draw footer on current page, add new page, draw header ───────
-const addPage = (doc, state) => {
-  drawFooter(doc, state.page);
+// ─── Page break ───────────────────────────────────────────────────────────────
+function np(doc, st) {
+  ftr(doc, st.p);
   doc.addPage();
-  state.page += 1;
-  drawHeader(doc, state.topic);
-};
+  st.p += 1;
+  hdr(doc, st.topic);
+}
 
-// ─── Ensure enough vertical space, adding a page if needed ───────────────────
-const ensure = (doc, needed, state) => {
-  if (doc.y + needed > PAGE_H - 55) addPage(doc, state);
-};
+function need(doc, n, st) {
+  if (doc.y + n > PH - 55) np(doc, st);
+}
 
-// ─── Section title with left accent bar ───────────────────────────────────────
-const sectionTitle = (doc, title, state, color = COLORS.indigo) => {
-  ensure(doc, 40, state);
-  const y = doc.y;
-  fillRect(doc, MARGIN, y, 4, 22, color, 2);
-  doc.fillColor(color).font("Helvetica-Bold").fontSize(12.5)
-    .text(title, MARGIN + 12, y + 4);
-  doc.moveDown(0.5);
-  hline(doc, MARGIN, doc.y, PAGE_W - MARGIN, color + "33");
+// ─── Section header — left accent bar + label (ASCII only) ───────────────────
+function sec(doc, label, st, color) {
+  need(doc, 44, st);
+  var y = doc.y;
+  rRect(doc, M, y, 4, 24, color, 2);
+  txt(doc, label, M + 12, y + 5, color, "Helvetica-Bold", 12.5);
+  doc.moveDown(0.35);
+  hl(doc, M, doc.y, PW - M, color + "33");
   doc.moveDown(0.6);
-};
+}
 
-// ─── Inline colour badge ──────────────────────────────────────────────────────
-const badge = (doc, x, y, text, bg) => {
-  const tw = doc.font("Helvetica-Bold").fontSize(7.5).widthOfString(text) + 14;
-  fillRect(doc, x, y, tw, 14, bg, 4);
-  doc.fillColor(COLORS.white).font("Helvetica-Bold").fontSize(7.5)
-    .text(text, x + 7, y + 2, { lineBreak: false });
-};
+// ─── Coloured pill label (ASCII safe) ────────────────────────────────────────
+function pill(doc, x, y, label, bg) {
+  doc.save();
+  doc.font("Helvetica-Bold");
+  doc.fontSize(7.5);
+  var tw = doc.widthOfString(label) + 14;
+  doc.restore();
+  rRect(doc, x, y, tw, 15, bg, 4);
+  txt(doc, label, x + 7, y + 2.5, "#ffffff", "Helvetica-Bold", 7.5, { lineBreak: false });
+}
 
-// ─── Bullet ───────────────────────────────────────────────────────────────────
-const bullet = (doc, text, state, color = COLORS.indigo) => {
-  ensure(doc, 16, state);
-  const x = MARGIN + 10;
-  fillRect(doc, x, doc.y + 5, 5, 5, color, 1);
-  doc.fillColor(COLORS.text).font("Helvetica").fontSize(10.5)
-    .text(text, x + 12, doc.y, { width: USABLE_W - 22 });
-};
+// ─── Bullet row ───────────────────────────────────────────────────────────────
+function bul(doc, text, st, color) {
+  need(doc, 16, st);
+  var x = M + 10;
+  rRect(doc, x, doc.y + 5, 5, 5, color, 1);
+  txt(doc, text, x + 12, doc.y, COL.text, "Helvetica", 10.5, { width: INNER - 22 });
+}
 
-// ─── Priority colour ──────────────────────────────────────────────────────────
-const starColor = (s) =>
-  s.includes("⭐⭐⭐") ? COLORS.red :
-  s.includes("⭐⭐")  ? COLORS.amber : COLORS.green;
+// ─── Star-importance → text + colour ─────────────────────────────────────────
+function starInfo(star) {
+  if (star.includes("\u2B50\u2B50\u2B50") || star.includes("***")) return { label: "*** Frequently Asked", color: COL.red };
+  if (star.includes("\u2B50\u2B50") || star.includes("**"))         return { label: "**  Important",        color: COL.amber };
+  return { label: "*   Standard", color: COL.green };
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CHART DRAWING — pure PDFKit, no external libs
-// ─────────────────────────────────────────────────────────────────────────────
-const drawBarChart = (doc, chart, state) => {
-  if (!Array.isArray(chart.data) || chart.data.length === 0) return;
-  ensure(doc, 170, state);
+// ─── BAR CHART ───────────────────────────────────────────────────────────────
+function barChart(doc, chart, st) {
+  var data = chart.data || [];
+  if (data.length === 0) return;
+  need(doc, 180, st);
 
-  const cw = USABLE_W, ch = 120, sx = MARGIN, sy = doc.y;
-  const vals = chart.data.map((d) => Number(d.value) || 0);
-  const maxV = Math.max(...vals, 1);
-  const bw   = Math.min(40, (cw - 30) / chart.data.length - 6);
-  const slot  = (cw - 30) / chart.data.length;
+  var cx = M, cy = doc.y;
+  var cw = INNER, ch = 130;
+  var vals = data.map(function(d) { return Number(d.value) || 0; });
+  var maxV = Math.max.apply(null, vals.concat([1]));
+  var n    = data.length;
+  var slot = (cw - 40) / n;
+  var bw   = Math.min(45, slot * 0.65);
 
-  fillRect(doc, sx, sy, cw, ch + 30, "#f1f5f9", 6);
-  hline(doc, sx + 8, sy + ch + 2, sx + cw - 8, sy + ch + 2, COLORS.border);
+  // Chart background
+  rRect(doc, cx, cy, cw, ch + 42, COL.bg, 8);
+  hl(doc, cx + 8, cy + ch + 4, cx + cw - 8, cy + ch + 4, "#e2e8f0");
 
-  chart.data.forEach((d, i) => {
-    const bh  = Math.max(3, (vals[i] / maxV) * (ch - 20));
-    const bx  = sx + 15 + i * slot + (slot - bw) / 2;
-    const by  = sy + 8 + (ch - 20 - bh);
-    const col = COLORS.chart[i % COLORS.chart.length];
+  data.forEach(function(d, i) {
+    var v   = vals[i];
+    var bh  = Math.max(4, (v / maxV) * (ch - 24));
+    var bx  = cx + 20 + i * slot + (slot - bw) / 2;
+    var by  = cy + 10 + (ch - 24) - bh;
+    var col = COL.bars[i % COL.bars.length];
 
-    fillRect(doc, bx, by, bw, bh, col, 3);
+    rRect(doc, bx, by, bw, bh, col, 4);
 
-    // value label
-    doc.fillColor(COLORS.text).font("Helvetica-Bold").fontSize(7)
-      .text(String(vals[i]), bx, by - 10, { width: bw, align: "center", lineBreak: false });
+    // Value label above bar
+    txt(doc, String(v), bx, by - 12, COL.text, "Helvetica-Bold", 7.5,
+      { width: bw, align: "center", lineBreak: false });
 
-    // x-axis label
-    const lbl = (d.name || "").length > 9 ? d.name.slice(0, 9) + "…" : (d.name || "");
-    doc.fillColor(COLORS.textMid).font("Helvetica").fontSize(7)
-      .text(lbl, bx, sy + ch + 6, { width: bw, align: "center", lineBreak: false });
+    // X-axis label — full text, 9px, centred, allow wrap
+    var name = String(d.name || "");
+    var lx   = bx + bw / 2;
+    var ly   = cy + ch + 8;
+    // Fit in slot width with a bit of padding
+    txt(doc, name, lx - slot * 0.45, ly, COL.mid, "Helvetica", 7.5,
+      { width: slot * 0.9, align: "center", lineBreak: false });
   });
 
-  doc.y = sy + ch + 36;
-  doc.moveDown(0.3);
-};
+  doc.y = cy + ch + 44;
+  doc.moveDown(0.2);
+}
 
-const drawLineChart = (doc, chart, state) => {
-  if (!Array.isArray(chart.data) || chart.data.length < 2) {
-    drawBarChart(doc, chart, state);
-    return;
+// ─── LINE CHART ──────────────────────────────────────────────────────────────
+function lineChart(doc, chart, st) {
+  var data = chart.data || [];
+  if (data.length < 2) { barChart(doc, chart, st); return; }
+  need(doc, 180, st);
+
+  var cx = M, cy = doc.y;
+  var cw = INNER, ch = 120;
+  var vals  = data.map(function(d) { return Number(d.value) || 0; });
+  var maxV  = Math.max.apply(null, vals.concat([1]));
+  var stepX = (cw - 40) / (data.length - 1);
+
+  rRect(doc, cx, cy, cw, ch + 40, COL.bg, 8);
+
+  var pts = vals.map(function(v, i) {
+    return {
+      x: cx + 20 + i * stepX,
+      y: cy + 10 + (ch - 24) * (1 - v / maxV),
+    };
+  });
+
+  for (var i = 0; i < pts.length - 1; i++) {
+    sl(doc, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, COL.indigo, 2);
   }
-  ensure(doc, 170, state);
 
-  const cw = USABLE_W, ch = 110, sx = MARGIN, sy = doc.y;
-  const vals = chart.data.map((d) => Number(d.value) || 0);
-  const maxV = Math.max(...vals, 1);
-  const stepX = (cw - 30) / (chart.data.length - 1);
-
-  fillRect(doc, sx, sy, cw, ch + 30, "#f1f5f9", 6);
-
-  const pts = vals.map((v, i) => ({
-    x: sx + 15 + i * stepX,
-    y: sy + 8 + (ch - 20) * (1 - v / maxV),
-  }));
-
-  doc.save()
-    .moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) doc.lineTo(pts[i].x, pts[i].y);
-  doc.strokeColor(COLORS.indigo).lineWidth(2).stroke().restore();
-
-  pts.forEach((p, i) => {
-    doc.save().circle(p.x, p.y, 3.5).fill(COLORS.indigo).restore();
-    doc.fillColor(COLORS.text).font("Helvetica-Bold").fontSize(7)
-      .text(String(vals[i]), p.x - 10, p.y - 12,
-        { width: 22, align: "center", lineBreak: false });
-    const lbl = (chart.data[i].name || "").length > 8
-      ? chart.data[i].name.slice(0, 8) + "…" : (chart.data[i].name || "");
-    doc.fillColor(COLORS.textMid).font("Helvetica").fontSize(7)
-      .text(lbl, p.x - 15, sy + ch + 7,
-        { width: 32, align: "center", lineBreak: false });
+  pts.forEach(function(p, i) {
+    rRect(doc, p.x - 4, p.y - 4, 8, 8, COL.indigo, 8);
+    txt(doc, String(vals[i]), p.x - 12, p.y - 14, COL.text, "Helvetica-Bold", 7.5,
+      { width: 26, align: "center", lineBreak: false });
+    var name = String(data[i].name || "");
+    txt(doc, name, p.x - stepX * 0.4, cy + ch + 8, COL.mid, "Helvetica", 7.5,
+      { width: stepX * 0.8, align: "center", lineBreak: false });
   });
 
-  doc.y = sy + ch + 36;
-  doc.moveDown(0.3);
-};
+  doc.y = cy + ch + 44;
+  doc.moveDown(0.2);
+}
 
-const drawPieTable = (doc, chart, state) => {
-  if (!Array.isArray(chart.data) || chart.data.length === 0) return;
-  ensure(doc, chart.data.length * 12 + 20, state);
+// ─── PIE LEGEND ──────────────────────────────────────────────────────────────
+function pieLegend(doc, chart, st) {
+  var data = chart.data || [];
+  if (data.length === 0) return;
+  var rows = Math.ceil(data.length / 2);
+  need(doc, rows * 22 + 16, st);
 
-  const total = chart.data.reduce((s, d) => s + (Number(d.value) || 0), 0);
-  const colW  = (USABLE_W - 12) / 2;
-  const sy    = doc.y;
+  var total = data.reduce(function(s, d) { return s + (Number(d.value) || 0); }, 0);
+  var colW  = (INNER - 12) / 2;
+  var sy    = doc.y;
 
-  chart.data.forEach((d, i) => {
-    const col = i % 2, row = Math.floor(i / 2);
-    const x   = MARGIN + 4 + col * colW;
-    const y   = sy + row * 22;
-    const pct = total > 0 ? ((d.value / total) * 100).toFixed(0) : 0;
-    fillRect(doc, x, y + 3, 10, 10, COLORS.chart[i % COLORS.chart.length], 2);
-    doc.fillColor(COLORS.text).font("Helvetica").fontSize(9.5)
-      .text(`${d.name} — ${d.value} (${pct}%)`, x + 16, y + 2, { lineBreak: false });
+  data.forEach(function(d, i) {
+    var col = i % 2, row = Math.floor(i / 2);
+    var x   = M + 4 + col * colW;
+    var y   = sy + row * 22;
+    var pct = total > 0 ? ((d.value / total) * 100).toFixed(0) : 0;
+    rRect(doc, x, y + 3, 10, 10, COL.bars[i % COL.bars.length], 2);
+    txt(doc, d.name + " - " + d.value + " (" + pct + "%)", x + 16, y + 2, COL.text, "Helvetica", 9.5, { lineBreak: false });
   });
 
-  doc.y = sy + Math.ceil(chart.data.length / 2) * 22 + 8;
-};
+  doc.y = sy + rows * 22 + 8;
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN CONTROLLER — no bufferPages, no switchToPage, no crash
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── MAIN CONTROLLER ─────────────────────────────────────────────────────────
 export const pdfDownload = async (req, res) => {
+  var doc = null;
+
   try {
-    const { result, diagramPng } = req.body;
+    var result     = req.body.result;
+    var diagramPng = req.body.diagramPng;
+
     if (!result) return res.status(400).json({ error: "No content provided" });
 
-    // Extract topic for header label
-    const topicM = (result.notes || "").match(/^#+\s+(.+)/m);
-    const topic  = topicM ? topicM[1].replace(/[#*]/g, "").trim() : "Study Notes";
+    var topicM = (result.notes || "").match(/^#+\s+(.+)/m);
+    var topic  = topicM ? topicM[1].replace(/[#*]/g, "").trim() : "Study Notes";
+    var st     = { p: 1, topic: topic };
 
-    // State shared across page helpers
-    const state = { page: 1, topic };
-
-    // ── Create document ──────────────────────────────────────────────────────
-    const doc = new PDFDocument({
-      size: "A4",
-      margin: MARGIN,
-      autoFirstPage: false,   // we add pages manually so we control headers
-    });
+    doc = new PDFDocument({ size: "A4", margin: M, autoFirstPage: false });
 
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition",
-      `attachment; filename="ExamNotesAI-${Date.now()}.pdf"`);
+    res.setHeader("Content-Disposition", 'attachment; filename="ExamCraft-' + Date.now() + '.pdf"');
     doc.pipe(res);
 
-    // ── PAGE 1 ───────────────────────────────────────────────────────────────
     doc.addPage();
-    drawHeader(doc, topic);
+    hdr(doc, topic);
 
     // ── IMPORTANCE BADGE ─────────────────────────────────────────────────────
     if (result.importance) {
-      const ic = result.importance.includes("⭐⭐⭐") ? COLORS.red
-               : result.importance.includes("⭐⭐")  ? COLORS.amber : COLORS.green;
-      const il = result.importance.includes("⭐⭐⭐") ? "HIGH IMPORTANCE"
-               : result.importance.includes("⭐⭐")  ? "MEDIUM IMPORTANCE" : "STANDARD";
-      const iy = doc.y;
-      fillRect(doc, MARGIN, iy, USABLE_W, 34, ic + "15", 8);
-      doc.save().roundedRect(MARGIN, iy, USABLE_W, 34, 8)
-        .stroke(ic + "44").lineWidth(0.5).restore();
-      doc.fillColor(ic).font("Helvetica-Bold").fontSize(11)
-        .text(`${result.importance}   ${il}`, MARGIN + 14, iy + 10);
-      doc.moveDown(1.2);
+      // Convert emoji stars to ASCII label for rendering
+      var imp     = String(result.importance || "");
+      var ic      = imp.includes("\u2B50\u2B50\u2B50") ? COL.red  : imp.includes("\u2B50\u2B50") ? COL.amber : COL.green;
+      var ilabel  = imp.includes("\u2B50\u2B50\u2B50") ? "HIGH IMPORTANCE" : imp.includes("\u2B50\u2B50") ? "MEDIUM IMPORTANCE" : "STANDARD";
+      var iy      = doc.y;
+
+      rRect(doc, M, iy, INNER, 36, ic + "15", 8);
+      sRect(doc, M, iy, INNER, 36, ic + "55", 0.5, 8);
+      txt(doc, ilabel, M + 14, iy + 11, ic, "Helvetica-Bold", 12, { lineBreak: false });
+      doc.moveDown(1.4);
     }
 
     // ── SUB TOPICS ────────────────────────────────────────────────────────────
-    sectionTitle(doc, "◈  Sub Topics by Priority", state, COLORS.indigo);
+    sec(doc, "Sub Topics by Priority", st, COL.indigo);
 
     if (result.subTopics && typeof result.subTopics === "object") {
-      Object.entries(result.subTopics).forEach(([star, topics]) => {
+      Object.entries(result.subTopics).forEach(function(entry) {
+        var star = entry[0];
+        var topics = entry[1];
         if (!Array.isArray(topics) || topics.length === 0) return;
-        const sc  = starColor(star);
-        const lbl = star.includes("⭐⭐⭐") ? "Frequently Asked"
-                  : star.includes("⭐⭐") ? "Important" : "Standard";
 
-        ensure(doc, 30, state);
-        badge(doc, MARGIN + 8, doc.y, `${star}  ${lbl}`, sc);
-        doc.moveDown(0.8);
-        topics.forEach((t) => bullet(doc, t, state, sc));
-        doc.moveDown(0.4);
+        var info = starInfo(star);
+        need(doc, 28, st);
+        pill(doc, M + 8, doc.y, info.label, info.color);
+        doc.moveDown(0.9);
+        topics.forEach(function(t) { bul(doc, t, st, info.color); });
+        doc.moveDown(0.5);
       });
     }
 
-    doc.moveDown(0.5);
+    doc.moveDown(0.6);
 
     // ── NOTES ─────────────────────────────────────────────────────────────────
-    sectionTitle(doc, "✎  Detailed Notes", state, COLORS.purple);
+    sec(doc, "Detailed Notes", st, COL.purple);
 
     if (result.notes) {
-      const clean = result.notes
+      var notesClean = result.notes
         .replace(/\*\*(.*?)\*\*/g, "$1")
         .replace(/\*(.*?)\*/g, "$1");
 
-      clean.split("\n").filter((l) => l.trim()).forEach((line) => {
-        ensure(doc, 20, state);
+      notesClean.split("\n").forEach(function(line) {
+        if (!line.trim()) return;
+        need(doc, 22, st);
 
         if (/^###\s/.test(line)) {
-          doc.moveDown(0.25);
-          doc.fillColor(COLORS.purple).font("Helvetica-Bold").fontSize(11)
-            .text("▸  " + line.replace(/^###\s+/, ""), MARGIN + 6, doc.y);
+          doc.moveDown(0.3);
+          txt(doc, "  " + line.replace(/^###\s+/, ""), M + 4, doc.y, COL.purple, "Helvetica-Bold", 11.5, { width: INNER - 8 });
           doc.moveDown(0.2);
         } else if (/^##\s/.test(line)) {
-          doc.moveDown(0.3);
-          doc.fillColor(COLORS.indigoDk).font("Helvetica-Bold").fontSize(12)
-            .text(line.replace(/^##\s+/, ""), MARGIN + 4, doc.y);
-          hline(doc, MARGIN + 4, doc.y, PAGE_W - MARGIN, COLORS.indigo + "44");
+          doc.moveDown(0.35);
+          txt(doc, line.replace(/^##\s+/, ""), M + 2, doc.y, COL.indigoDk, "Helvetica-Bold", 12.5, { width: INNER - 4 });
+          hl(doc, M + 2, doc.y, PW - M, COL.indigo + "44");
           doc.moveDown(0.35);
         } else if (/^#\s/.test(line)) {
-          doc.moveDown(0.35);
-          doc.fillColor(COLORS.indigoDk).font("Helvetica-Bold").fontSize(13)
-            .text(line.replace(/^#\s+/, ""), MARGIN, doc.y);
+          doc.moveDown(0.4);
+          txt(doc, line.replace(/^#\s+/, ""), M, doc.y, COL.indigoDk, "Helvetica-Bold", 14, { width: INNER });
           doc.moveDown(0.35);
         } else if (/^[-•]\s/.test(line)) {
-          bullet(doc, line.replace(/^[-•]\s+/, ""), state, COLORS.purple);
+          bul(doc, line.replace(/^[-•]\s+/, ""), st, COL.purple);
         } else {
-          doc.fillColor(COLORS.text).font("Helvetica").fontSize(10.5)
-            .text(line.trim(), MARGIN + 4, doc.y, { width: USABLE_W - 8 });
+          txt(doc, line.trim(), M + 4, doc.y, COL.text, "Helvetica", 10.5, { width: INNER - 8 });
         }
       });
     }
 
     doc.moveDown(0.8);
 
-    // ── DIAGRAM IMAGE ─────────────────────────────────────────────────────────
-    const hasPng = diagramPng &&
-      typeof diagramPng === "string" &&
-      diagramPng.startsWith("data:image/png;base64,");
+    // ── DIAGRAM ───────────────────────────────────────────────────────────────
+    var hasPng = typeof diagramPng === "string" &&
+                 diagramPng.length > 100 &&
+                 diagramPng.startsWith("data:image/png;base64,");
 
     if (hasPng) {
-      ensure(doc, 200, state);
-      sectionTitle(doc, "◇  Diagram", state, COLORS.cyan);
+      need(doc, 230, st);
+      sec(doc, "Diagram", st, COL.cyan);
       try {
-        const buf = Buffer.from(diagramPng.replace("data:image/png;base64,", ""), "base64");
-        doc.image(buf, MARGIN, doc.y, { fit: [USABLE_W, 200], align: "center" });
-        doc.moveDown(1.5);
+        var buf = Buffer.from(diagramPng.replace("data:image/png;base64,", ""), "base64");
+        var iy2 = doc.y;
+        // Centre the image with max width=INNER, max height=200
+        rRect(doc, M, iy2, INNER, 204, "#f0f9ff", 8);
+        doc.image(buf, M + 2, iy2 + 2, { fit: [INNER - 4, 200], align: "center" });
+        doc.y = iy2 + 212;
+        doc.moveDown(0.5);
       } catch (e) {
-        console.error("Diagram embed error:", e.message);
+        console.error("Diagram image error:", e.message);
+        txt(doc, "Diagram available on the ExamCraft website.", M + 4, doc.y, COL.cyan, "Helvetica", 10, {});
+        doc.moveDown(1);
       }
-    } else if (result.diagram?.data) {
-      ensure(doc, 40, state);
-      sectionTitle(doc, "◇  Diagram", state, COLORS.cyan);
-      fillRect(doc, MARGIN, doc.y, USABLE_W, 26, COLORS.cyan + "12", 6);
-      doc.fillColor(COLORS.cyan).font("Helvetica").fontSize(9)
-        .text("View the interactive diagram on ExamNotes AI website.",
-          MARGIN + 10, doc.y + 8);
-      doc.moveDown(1.5);
+    } else if (result.diagram && result.diagram.data) {
+      need(doc, 44, st);
+      sec(doc, "Diagram", st, COL.cyan);
+      rRect(doc, M, doc.y, INNER, 28, COL.cyan + "10", 6);
+      txt(doc, "Tip: Enable diagram capture by using the latest MermaidSetup component.", M + 10, doc.y + 8, COL.cyan, "Helvetica", 9, { width: INNER - 20 });
+      doc.moveDown(1.8);
     }
 
     // ── CHARTS ────────────────────────────────────────────────────────────────
     if (Array.isArray(result.charts) && result.charts.length > 0) {
-      result.charts.forEach((chart, idx) => {
-        sectionTitle(doc, `▦  Chart: ${chart.title || `Chart ${idx + 1}`}`, state, COLORS.amber);
-        if      (chart.type === "pie")  drawPieTable(doc, chart, state);
-        else if (chart.type === "line") drawLineChart(doc, chart, state);
-        else                            drawBarChart(doc, chart, state);
+      result.charts.forEach(function(chart, idx) {
+        var chartTitle = chart.title || ("Chart " + (idx + 1));
+        sec(doc, "Chart: " + chartTitle, st, COL.amber);
+
+        if (chart.type === "pie") {
+          pieLegend(doc, chart, st);
+        } else if (chart.type === "line") {
+          lineChart(doc, chart, st);
+        } else {
+          barChart(doc, chart, st);
+        }
         doc.moveDown(0.8);
       });
     }
 
     // ── REVISION POINTS ───────────────────────────────────────────────────────
     if (Array.isArray(result.revisionPoints) && result.revisionPoints.length > 0) {
-      sectionTitle(doc, "✓  Revision Points", state, COLORS.green);
+      sec(doc, "Revision Points", st, COL.green);
 
-      const half = Math.ceil(result.revisionPoints.length / 2);
-      const col1 = result.revisionPoints.slice(0, half);
-      const col2 = result.revisionPoints.slice(half);
-      const cw2  = (USABLE_W - 14) / 2;
+      result.revisionPoints.forEach(function(p, i) {
+        need(doc, 20, st);
+        var x = M + 8;
+        rRect(doc, x, doc.y + 5, 5, 5, COL.green, 1);
+        txt(doc, p, x + 12, doc.y, COL.text, "Helvetica", 10.5, { width: INNER - 20 });
+      });
 
-      ensure(doc, col1.length * 16 + 8, state);
-      const sy = doc.y;
-
-      const printCol = (items, ox) => {
-        let y = sy;
-        items.forEach((p) => {
-          fillRect(doc, ox, y + 4, 5, 5, COLORS.green, 1);
-          doc.fillColor(COLORS.text).font("Helvetica").fontSize(9.5)
-            .text(p, ox + 10, y, { width: cw2 - 12 });
-          y = doc.y + 2;
-        });
-        return y;
-      };
-
-      const y1 = printCol(col1, MARGIN + 4);
-      doc.y = sy;
-      const y2 = printCol(col2, MARGIN + cw2 + 14);
-      doc.y = Math.max(y1, y2);
       doc.moveDown(0.8);
     }
 
     // ── IMPORTANT QUESTIONS ───────────────────────────────────────────────────
     if (result.questions) {
-      sectionTitle(doc, "?  Important Questions", state, COLORS.red);
+      sec(doc, "Important Questions", st, COL.red);
 
-      const qBlock = (label, bg, items) => {
+      // Helper — renders a block of questions
+      function qBlock(label, bg, items) {
         if (!Array.isArray(items) || items.length === 0) return;
-        ensure(doc, 26, state);
-        badge(doc, MARGIN + 6, doc.y, label, bg);
-        doc.moveDown(0.85);
-        items.forEach((q, i) => {
-          ensure(doc, 20, state);
-          doc.fillColor(bg + "ee").font("Helvetica-Bold").fontSize(10)
-            .text(`Q${i + 1}.  `, MARGIN + 8, doc.y,
-              { continued: true, width: 26 });
-          doc.fillColor(COLORS.text).font("Helvetica").fontSize(10)
-            .text(q, { width: USABLE_W - 34 });
-        });
-        doc.moveDown(0.5);
-      };
+        need(doc, 28, st);
+        pill(doc, M + 6, doc.y, label, bg);
+        doc.moveDown(1);
 
-      qBlock("SHORT ANSWER", COLORS.indigo, result.questions.short);
-      qBlock("LONG ANSWER",  COLORS.purple, result.questions.long);
+        items.forEach(function(q, i) {
+          need(doc, 24, st);
+          // Render as one combined text — NO continued:true (causes broken characters)
+          var full = "Q" + (i + 1) + ".  " + q;
+          doc.save();
+          doc.fillColor(COL.text);
+          doc.font("Helvetica");
+          doc.fontSize(10.5);
+          doc.text(full, M + 8, doc.y, { width: INNER - 16 });
+          doc.restore();
+        });
+        doc.moveDown(0.6);
+      }
+
+      qBlock("SHORT ANSWER", COL.indigo, result.questions.short);
+      qBlock("LONG ANSWER",  COL.purple, result.questions.long);
 
       if (result.questions.diagram) {
-        ensure(doc, 34, state);
-        badge(doc, MARGIN + 6, doc.y, "DIAGRAM BASED", COLORS.cyan);
-        doc.moveDown(0.85);
-        doc.fillColor(COLORS.text).font("Helvetica").fontSize(10)
-          .text(result.questions.diagram, MARGIN + 8, doc.y,
-            { width: USABLE_W - 16 });
+        need(doc, 36, st);
+        pill(doc, M + 6, doc.y, "DIAGRAM BASED", COL.cyan);
+        doc.moveDown(1);
+        txt(doc, result.questions.diagram, M + 8, doc.y, COL.text, "Helvetica", 10.5, { width: INNER - 16 });
         doc.moveDown(0.5);
       }
     }
 
-    // ── FOOTER ON LAST PAGE ───────────────────────────────────────────────────
-    // (Other pages got their footers drawn inside addPage() when transitioning)
-    drawFooter(doc, state.page);
-
+    // ── FOOTER on last page ───────────────────────────────────────────────────
+    ftr(doc, st.p);
     doc.end();
 
   } catch (err) {
-    console.error("PDF controller error:", err);
-    // Only send error response if headers not yet sent
-    if (!res.headersSent) {
-      res.status(500).json({ error: "PDF generation failed: " + err.message });
+    console.error("PDF error:", err.message);
+    if (doc === null) {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    } else {
+      try { doc.end(); } catch (_) {}
     }
   }
 };

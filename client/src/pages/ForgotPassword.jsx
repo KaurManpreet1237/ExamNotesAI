@@ -278,7 +278,7 @@ function ForgotPassword() {
           <Link to="/" className="inline-flex items-center gap-2.5 group">
             <img src={logo} alt="logo" className="w-8 h-8 group-hover:scale-105 transition-transform" />
             <span className="text-white font-semibold text-base">
-              ExamNotes <span className="text-gray-500">AI</span>
+              ExamCraft
             </span>
           </Link>
         </motion.div>

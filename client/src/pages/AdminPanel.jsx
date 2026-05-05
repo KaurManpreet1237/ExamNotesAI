@@ -70,7 +70,7 @@ function AdminNavbar({ activeTab, setActiveTab }) {
       <div className="flex items-center gap-3">
         <img src={logo} alt="logo" className="w-8 h-8" />
         <span className="text-white font-semibold hidden sm:block">
-          ExamNotes <span className="text-gray-500">AI</span>
+          ExamCraft
         </span>
         <span className="bg-indigo-500/15 border border-indigo-500/25 text-indigo-400
           text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full">
@@ -360,11 +360,11 @@ function AdminFooter() {
         <div className="flex items-center gap-2.5">
           <img src={logo} alt="logo" className="h-6 w-6" />
           <span className="text-gray-500 text-sm">
-            ExamNotes AI · Admin Panel
+            ExamCraft · Admin Panel
           </span>
         </div>
         <p className="text-gray-700 text-xs">
-          © {new Date().getFullYear()} ExamNotes AI · Secure admin access
+          © {new Date().getFullYear()} ExamCraft · Secure admin access
         </p>
       </div>
     </motion.footer>

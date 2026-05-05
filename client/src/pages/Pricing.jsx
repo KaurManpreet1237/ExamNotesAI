@@ -101,7 +101,7 @@ function Pricing() {
             className="flex items-center gap-2.5 group"
           >
             <img src={logo} alt="logo" className="w-7 h-7 group-hover:scale-105 transition-transform" />
-            <span className="font-semibold text-white">ExamNotes <span className="text-gray-500">AI</span></span>
+            <span className="font-semibold text-white">ExamCraft</span>
           </button>
           <button
             onClick={() => navigate("/")}

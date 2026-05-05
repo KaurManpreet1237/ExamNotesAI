@@ -58,7 +58,7 @@ function Navbar() {
       >
         <img src={logo} alt="logo" className="w-8 h-8 group-hover:scale-105 transition-transform duration-200" />
         <span className="text-base font-semibold text-white hidden sm:block">
-          ExamNotes <span className="text-gray-500">AI</span>
+          ExamCraft
         </span>
       </div>
 

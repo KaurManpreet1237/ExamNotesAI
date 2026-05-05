@@ -53,7 +53,7 @@ function Footer() {
             <div className="flex items-center gap-2.5 mb-4">
               <img src={logo} alt="logo" className="h-8 w-8 object-contain" />
               <span className="font-semibold text-white">
-                ExamNotes <span className="text-gray-500">AI</span>
+                ExamCraft
               </span>
             </div>
             <p className="text-gray-500 text-sm leading-relaxed max-w-xs">
@@ -106,7 +106,7 @@ function Footer() {
         <div className="pt-6 border-t border-white/8 flex flex-col sm:flex-row
           items-center justify-between gap-3">
           <p className="text-gray-600 text-xs">
-            © {new Date().getFullYear()} ExamNotes AI. All rights reserved.
+            © {new Date().getFullYear()} ExamCraft. All rights reserved.
           </p>
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

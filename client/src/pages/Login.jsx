@@ -93,7 +93,7 @@ function Login() {
           <Link to="/" className="inline-flex items-center gap-2.5 group">
             <img src={logo} alt="logo" className="w-8 h-8 group-hover:scale-105 transition-transform" />
             <span className="text-white font-semibold text-base">
-              ExamNotes <span className="text-gray-500">AI</span>
+              ExamCraft
             </span>
           </Link>
         </motion.div>
@@ -113,7 +113,7 @@ function Login() {
           <div className="h-px -mx-8 -mt-9 mb-9 bg-gradient-to-r from-transparent via-indigo-500/60 to-transparent" />
 
           <h2 className="text-2xl font-bold mb-1">Welcome back</h2>
-          <p className="text-gray-500 text-sm mb-7">Sign in to continue to ExamNotes AI</p>
+          <p className="text-gray-500 text-sm mb-7">Sign in to continue to ExamCraft</p>
 
           {/* Google */}
           <motion.button

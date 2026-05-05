@@ -6,95 +6,95 @@ export const getCurrentUser = async (dispatch) => {
   try {
     const result = await axios.get(serverUrl + "/api/user/currentuser", { withCredentials: true })
     dispatch(setUserData(result.data))
-  } catch (error) {
-    console.log(error)
-  }
+  } catch (e) { console.log(e) }
 }
 
 export const generateNotes = async (payload) => {
   try {
     const result = await axios.post(serverUrl + "/api/notes/generate-notes", payload, { withCredentials: true })
     return result.data
-  } catch (error) {
-    console.log(error)
-  }
+  } catch (e) { console.log(e) }
 }
 
 /**
- * Safely captures the Mermaid SVG from the DOM as a base64 PNG.
- * Returns null (never throws) if no diagram is present or anything fails.
+ * Finds the rendered Mermaid SVG in #mermaid-container, draws it onto a
+ * canvas at 2x scale for crispness, and returns a base64 PNG data URL.
+ * Returns null (never throws) if no diagram is visible or anything fails.
  */
-const captureDiagramPng = async () => {
-  try {
-    const container = document.getElementById("mermaid-container")
-    if (!container) return null
+const captureDiagramPng = () =>
+  new Promise((resolve) => {
+    try {
+      const container = document.getElementById("mermaid-container")
+      if (!container) { resolve(null); return }
 
-    const svgEl = container.querySelector("svg")
-    if (!svgEl) return null
+      const svg = container.querySelector("svg")
+      if (!svg) { resolve(null); return }
 
-    const bbox = svgEl.getBoundingClientRect()
-    const w = Math.max(bbox.width || 0, 400)
-    const h = Math.max(bbox.height || 0, 200)
-
-    // Clone and prepare SVG for rasterisation
-    const clone = svgEl.cloneNode(true)
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
-    clone.setAttribute("width", String(w))
-    clone.setAttribute("height", String(h))
-
-    // White background so the PNG renders cleanly in the PDF
-    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect")
-    bg.setAttribute("width", "100%")
-    bg.setAttribute("height", "100%")
-    bg.setAttribute("fill", "white")
-    clone.insertBefore(bg, clone.firstChild)
-
-    const svgString = new XMLSerializer().serializeToString(clone)
-    const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-
-    return await new Promise((resolve) => {
-      const img = new Image()
-
-      img.onload = () => {
+      // Let the browser finish any pending layout before measuring
+      requestAnimationFrame(() => {
         try {
-          const scale = 2 // retina quality
-          const canvas = document.createElement("canvas")
-          canvas.width  = w * scale
-          canvas.height = h * scale
-          const ctx = canvas.getContext("2d")
-          ctx.scale(scale, scale)
-          ctx.fillStyle = "white"
-          ctx.fillRect(0, 0, w, h)
-          ctx.drawImage(img, 0, 0, w, h)
-          URL.revokeObjectURL(url)
-          resolve(canvas.toDataURL("image/png"))
-        } catch (e) {
-          URL.revokeObjectURL(url)
-          resolve(null)
-        }
-      }
+          const rect = svg.getBoundingClientRect()
+          const W = Math.max(rect.width  || svg.viewBox?.baseVal?.width  || 0, 300)
+          const H = Math.max(rect.height || svg.viewBox?.baseVal?.height || 0, 200)
 
-      img.onerror = () => {
-        URL.revokeObjectURL(url)
-        resolve(null)
-      }
+          // Clone SVG, inject white background, set explicit dimensions
+          const clone = svg.cloneNode(true)
+          clone.setAttribute("xmlns", "http://www.w3.org/2000/svg")
+          clone.setAttribute("width",  String(W))
+          clone.setAttribute("height", String(H))
 
-      img.src = url
-    })
-  } catch {
-    return null  // never propagate — diagram capture is optional
-  }
-}
+          const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect")
+          bg.setAttribute("width",  "100%")
+          bg.setAttribute("height", "100%")
+          bg.setAttribute("fill",   "white")
+          clone.insertBefore(bg, clone.firstChild)
+
+          const svgStr = new XMLSerializer().serializeToString(clone)
+          const blob   = new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" })
+          const url    = URL.createObjectURL(blob)
+
+          const img = new Image()
+
+          img.onload = () => {
+            try {
+              const scale  = 2           // retina quality
+              const canvas = document.createElement("canvas")
+              canvas.width  = W * scale
+              canvas.height = H * scale
+              const ctx = canvas.getContext("2d")
+              ctx.scale(scale, scale)
+              ctx.fillStyle = "white"
+              ctx.fillRect(0, 0, W, H)
+              ctx.drawImage(img, 0, 0, W, H)
+              URL.revokeObjectURL(url)
+              resolve(canvas.toDataURL("image/png"))
+            } catch (e) {
+              URL.revokeObjectURL(url)
+              resolve(null)
+            }
+          }
+
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+          img.src = url
+
+        } catch (e) { resolve(null) }
+      })
+    } catch (e) { resolve(null) }
+  })
 
 /**
- * Downloads a professional PDF with diagrams and charts embedded.
- * The diagram (if rendered on screen) is captured as a PNG and sent
- * to the server so it can be embedded as a real image in the PDF.
+ * Downloads a professional PDF.
+ * Automatically captures the rendered diagram SVG from the DOM
+ * and embeds it as a crisp PNG in the PDF.
  */
 export const downloadPdf = async (result) => {
-  // Capture diagram (null if none rendered — that's fine)
-  const diagramPng = await captureDiagramPng()
+  // Wait a short moment so any pending SVG renders finish, then capture
+  const diagramPng = await new Promise((resolve) => {
+    setTimeout(async () => {
+      const png = await captureDiagramPng()
+      resolve(png)
+    }, 150)
+  })
 
   const response = await axios.post(
     serverUrl + "/api/pdf/generate-pdf",
@@ -104,11 +104,11 @@ export const downloadPdf = async (result) => {
 
   const blob = new Blob([response.data], { type: "application/pdf" })
   const url  = window.URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href     = url
-  link.download = `ExamNotesAI-${Date.now()}.pdf`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
+  const a    = document.createElement("a")
+  a.href     = url
+  a.download = "ExamCraft-" + Date.now() + ".pdf"
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
   window.URL.revokeObjectURL(url)
 }

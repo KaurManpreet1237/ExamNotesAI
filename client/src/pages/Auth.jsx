@@ -57,7 +57,7 @@ function LandingNav({ onCTA }) {
         <div className="flex items-center gap-3">
           <img src={logo} alt="logo" className="w-8 h-8" />
           <span className="text-white font-semibold text-base">
-            ExamNotes <span className="text-gray-400">AI</span>
+            ExamCraft
           </span>
         </div>
         <div className="hidden md:flex items-center gap-8 text-sm text-gray-400">
@@ -204,7 +204,7 @@ function Auth() {
                     <div className="w-3 h-3 rounded-full bg-green-500/60" />
                   </div>
                   <div className="flex-1 h-5 rounded bg-white/5 text-xs text-gray-500 flex items-center px-3">
-                    ExamNotes AI — Generating...
+                    ExamCraft — Generating...
                   </div>
                 </div>
                 <div className="space-y-2.5">
@@ -365,7 +365,7 @@ function Auth() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {[
               { name: "Priya S.", role: "B.Tech Student", text: "Generated complete DBMS notes in under 30 seconds. The diagrams were perfect for my university exam.", stars: 5 },
-              { name: "Arjun M.", role: "12th Grade", text: "I used ExamNotes AI for my board prep. The revision mode is incredible — saved me 3 hours per subject.", stars: 5 },
+              { name: "Arjun M.", role: "12th Grade", text: "I used ExamCraft for my board prep. The revision mode is incredible — saved me 3 hours per subject.", stars: 5 },
               { name: "Riya K.", role: "MBA Student", text: "Project documentation used to take me an entire evening. Now it takes 5 minutes. Game changer.", stars: 5 },
             ].map((t, i) => (
               <FadeIn key={t.name} delay={i * 0.1}>
@@ -469,7 +469,7 @@ function Auth() {
                   Ready to study <GradientText>smarter?</GradientText>
                 </h2>
                 <p className="text-gray-400 text-lg mb-8 max-w-lg mx-auto">
-                  Join thousands of students using ExamNotes AI to generate
+                  Join thousands of students using ExamCraft to generate
                   perfect exam notes in seconds.
                 </p>
                 <motion.button
@@ -499,7 +499,7 @@ function Auth() {
             <div className="md:col-span-2">
               <div className="flex items-center gap-2.5 mb-4">
                 <img src={logo} alt="logo" className="w-7 h-7" />
-                <span className="font-semibold text-white">ExamNotes AI</span>
+                <span className="font-semibold text-white">ExamCraft</span>
               </div>
               <p className="text-gray-500 text-sm max-w-xs leading-relaxed">
                 AI-powered exam notes, project documentation, diagrams and PDFs.
@@ -525,7 +525,7 @@ function Auth() {
             </div>
           </div>
           <div className="pt-8 border-t border-white/8 flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-gray-600 text-xs">© {new Date().getFullYear()} ExamNotes AI. All rights reserved.</p>
+            <p className="text-gray-600 text-xs">© {new Date().getFullYear()} ExamCraft. All rights reserved.</p>
             <p className="text-gray-700 text-xs">Built with AI · Made for students</p>
           </div>
         </div>
