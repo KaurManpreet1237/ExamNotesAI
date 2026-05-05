@@ -4,138 +4,213 @@ import { motion } from "motion/react"
 import img from "../assets/img1.png"
 import Footer from '../components/Footer'
 import { useNavigate } from 'react-router-dom'
+import { useSelector } from 'react-redux'
+
+const FadeIn = ({ children, delay = 0, className = "" }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.6, delay }}
+    className={className}
+  >
+    {children}
+  </motion.div>
+)
 
 function Home() {
   const navigate = useNavigate()
+  const { userData } = useSelector((state) => state.user)
+
   return (
-    <div className='min-h-screen overflow-hidden bg-white text-black'>
+    <div className="min-h-screen bg-[#fafafa] text-black">
       <Navbar />
-      {/* top */}
-      <section className='max-w-7xl mx-auto px-8 pt-32 grid grid-cols-1 lg:grid-cols-2 gap-20 items-center'>
-        <div>
-          <motion.div
-            initial={{ opacity: 0, x: -60 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.7 }}
-            whileHover={{ rotateX: 6, rotateY: -6 }}
-            className="transform-gpu"
-            style={{ transformStyle: "preserve-3d" }}
-          >
-            <motion.h1 className="text-5xl lg:text-6xl font-extrabold leading-tight
-              bg-gradient-to-br from-black/90 via-black/60 to-black/90
-              bg-clip-text text-transparent"
-              whileHover={{ y: -4 }}
-              style={{
-                transform: "translateZ(40px)",
-                textShadow: "0 18px 40px rgba(0,0,0,0.25)",
-              }}
-            >
-              Create Smart <br /> AI Notes in Seconds
 
+      {/* ── Hero ── */}
+      <section className="max-w-7xl mx-auto px-6 pt-16 pb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+          {/* Left */}
+          <div>
+            <FadeIn delay={0}>
+              <div className="inline-flex items-center gap-2 text-xs font-medium
+                text-indigo-600 bg-indigo-50 border border-indigo-100
+                rounded-full px-4 py-1.5 mb-5">
+                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse" />
+                Welcome back, {userData?.name?.split(" ")[0]} 👋
+              </div>
+            </FadeIn>
 
-            </motion.h1>
+            <FadeIn delay={0.1}>
+              <h1 className="text-5xl lg:text-6xl font-extrabold leading-tight mb-5
+                bg-gradient-to-br from-gray-900 via-gray-700 to-gray-900
+                bg-clip-text text-transparent">
+                Create Smart
+                <br />
+                <span className="bg-gradient-to-r from-indigo-600 to-purple-600
+                  bg-clip-text text-transparent">
+                  AI Notes
+                </span>
+                <br />
+                in Seconds
+              </h1>
+            </FadeIn>
 
-            <motion.p whileHover={{ y: -2 }}
-              className=' mt-6 max-w-xl text-lg
-              bg-gradient-to-br from-gray-700 via-gray-500/80 to-gray-700
-              bg-clip-text text-transparent'
-              style={{
-                transform: "translateZ(40px)",
-                textShadow: "0 18px 40px rgba(0,0,0,0.25)",
-              }}
-            >
-              Generate exam-focused notes, project documentation,
-              flow diagrams and revision-ready content using AI —
-              faster, cleaner and smarter.
+            <FadeIn delay={0.2}>
+              <p className="text-gray-500 text-lg leading-relaxed max-w-lg mb-8">
+                Generate exam-focused notes, project documentation, flow diagrams
+                and revision-ready content — faster, cleaner and smarter.
+              </p>
+            </FadeIn>
 
-            </motion.p>
-            
-
-          </motion.div>
-
-          <motion.button
-            onClick={()=>navigate("/notes")}
-              whileHover={{
-                scale: 1.07
-              }}
-              whileTap={{ scale: 0.97 }}
-              
-              className='mt-10 px-10 py-3 rounded-xl
-                          flex items-center gap-3
-                          bg-gradient-to-br from-black/90 via-black/80 to-black/90
-                          border border-white/10
-                          text-white font-semibold text-lg
-                          shadow-[0_25px_60px_rgba(0,0,0,0.7)]'>
-              
-              Get Started
-
-
-            </motion.button>
-        </div>
-
-
-        <motion.div 
-         initial={{ opacity: 0, x: 60 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.7 }}
-          whileHover={{
-            y: -12,
-            rotateX: 8,
-            rotateY: -8,
-            scale: 1.05,
-          }}
-          className="transform-gpu"
-          style={{ transformStyle: "preserve-3d" }}
-        >
-          <div className='overflow-hidden'>
-            <img src={img} alt="img" 
-              style={{ transform: "translateZ(35px)" }} />
-
+            <FadeIn delay={0.3}>
+              <div className="flex flex-wrap gap-3">
+                <motion.button
+                  onClick={() => navigate("/notes")}
+                  whileHover={{ scale: 1.04, y: -2 }}
+                  whileTap={{ scale: 0.97 }}
+                  className="px-8 py-3.5 rounded-xl font-semibold text-base text-white
+                    bg-gradient-to-r from-indigo-600 to-purple-600
+                    hover:from-indigo-500 hover:to-purple-500
+                    shadow-[0_8px_30px_rgba(99,102,241,0.35)]
+                    hover:shadow-[0_12px_40px_rgba(99,102,241,0.5)]
+                    transition-all duration-300"
+                >
+                  ✨ Start Generating
+                </motion.button>
+                <motion.button
+                  onClick={() => navigate("/history")}
+                  whileHover={{ scale: 1.03, y: -1 }}
+                  whileTap={{ scale: 0.97 }}
+                  className="px-6 py-3.5 rounded-xl font-medium text-base text-gray-700
+                    bg-white border border-gray-200 hover:border-gray-300
+                    shadow-sm hover:shadow-md transition-all duration-300"
+                >
+                  📚 My Notes
+                </motion.button>
+              </div>
+            </FadeIn>
           </div>
 
-        </motion.div>
-
+          {/* Right image */}
+          <FadeIn delay={0.3}>
+            <motion.div
+              whileHover={{ y: -8, rotateX: 6, rotateY: -6, scale: 1.03 }}
+              transition={{ type: "spring", stiffness: 200, damping: 20 }}
+              className="transform-gpu"
+              style={{ transformStyle: "preserve-3d" }}
+            >
+              <div className="relative rounded-3xl overflow-hidden
+                border border-gray-200 shadow-[0_30px_80px_rgba(0,0,0,0.12)]">
+                <img
+                  src={img}
+                  alt="Students studying"
+                  className="w-full object-cover"
+                />
+                {/* Floating badges */}
+                <motion.div
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm
+                    border border-gray-200 rounded-2xl px-4 py-2.5 shadow-lg"
+                >
+                  <p className="text-xs text-gray-500">Generated in</p>
+                  <p className="text-base font-bold text-gray-900">3.2 seconds ⚡</p>
+                </motion.div>
+                <motion.div
+                  animate={{ y: [0, 6, 0] }}
+                  transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+                  className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm
+                    border border-gray-200 rounded-2xl px-4 py-2.5 shadow-lg"
+                >
+                  <p className="text-xs text-gray-500">Credits</p>
+                  <p className="text-base font-bold text-indigo-600">{userData?.credits} 💠</p>
+                </motion.div>
+              </div>
+            </motion.div>
+          </FadeIn>
+        </div>
       </section>
 
-      {/* bottom */}
-      <section className='max-w-6xl mx-auto px-8 py-32 grid grid-cols-1 md:grid-cols-4 gap-10'>
-        <Feature icon="📘" title="Exam Notes" des="High-yield exam-oriented notes with revision points."/>
-        <Feature icon="📂" title="Project Notes" des="Well-structured content for assignments and projects." />
-        <Feature icon="📊" title="Diagrams" des="Auto-generated visual diagrams for clarity." />
-        <Feature icon="⬇️" title="PDF Download" des="Download clean, printable PDFs instantly." />
-
+      {/* ── Quick actions ── */}
+      <section className="max-w-7xl mx-auto px-6 py-8">
+        <FadeIn delay={0.4}>
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-4">
+            Quick actions
+          </h2>
+        </FadeIn>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { icon: "✨", label: "Generate Notes", sub: "Create AI notes", action: () => navigate("/notes"), gradient: "from-indigo-500/10 to-purple-500/5", border: "hover:border-indigo-300" },
+            { icon: "📚", label: "My History", sub: "View past notes", action: () => navigate("/history"), gradient: "from-blue-500/10 to-cyan-500/5", border: "hover:border-blue-300" },
+            { icon: "💎", label: "Buy Credits", sub: `${userData?.credits} remaining`, action: () => navigate("/pricing"), gradient: "from-emerald-500/10 to-teal-500/5", border: "hover:border-emerald-300" },
+            { icon: "📄", label: "PDF Export", sub: "Download notes", action: () => navigate("/notes"), gradient: "from-orange-500/10 to-amber-500/5", border: "hover:border-orange-300" },
+          ].map((item, i) => (
+            <FadeIn key={item.label} delay={0.4 + i * 0.08}>
+              <motion.button
+                onClick={item.action}
+                whileHover={{ y: -4, scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                className={`w-full text-left rounded-2xl p-5 border border-gray-200
+                  bg-gradient-to-br ${item.gradient}
+                  ${item.border} transition-all duration-300 group`}
+              >
+                <span className="text-3xl block mb-3">{item.icon}</span>
+                <p className="font-semibold text-gray-900 text-sm">{item.label}</p>
+                <p className="text-gray-500 text-xs mt-0.5">{item.sub}</p>
+              </motion.button>
+            </FadeIn>
+          ))}
+        </div>
       </section>
-      <Footer/>
 
+      {/* ── Features ── */}
+      <section className="max-w-7xl mx-auto px-6 py-16">
+        <FadeIn>
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-2xl font-bold text-gray-900">What you can create</h2>
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => navigate("/notes")}
+              className="px-5 py-2 rounded-xl text-sm font-medium text-white
+                bg-gradient-to-r from-indigo-600 to-purple-600
+                hover:opacity-90 transition-opacity"
+            >
+              Start now →
+            </motion.button>
+          </div>
+        </FadeIn>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { icon: "📘", title: "Exam Notes", desc: "High-yield notes with revision points.", color: "border-blue-100 hover:border-blue-200" },
+            { icon: "📂", title: "Project Notes", desc: "Documentation for assignments.", color: "border-purple-100 hover:border-purple-200" },
+            { icon: "📊", title: "Diagrams", desc: "Visual flow charts and mind maps.", color: "border-emerald-100 hover:border-emerald-200" },
+            { icon: "⬇️", title: "PDF Download", desc: "Clean printable PDFs instantly.", color: "border-orange-100 hover:border-orange-200" },
+          ].map((f, i) => (
+            <FadeIn key={f.title} delay={i * 0.07}>
+              <motion.div
+                onClick={() => navigate("/notes")}
+                whileHover={{ y: -6, rotateX: 6, rotateY: -6, scale: 1.03 }}
+                transition={{ type: "spring", stiffness: 250, damping: 20 }}
+                className={`cursor-pointer rounded-2xl p-6 bg-white border ${f.color}
+                  shadow-sm hover:shadow-lg transition-all duration-300`}
+                style={{ transformStyle: "preserve-3d" }}
+              >
+                <div style={{ transform: "translateZ(20px)" }}>
+                  <div className="text-4xl mb-4">{f.icon}</div>
+                  <h3 className="font-semibold text-gray-900 text-base mb-1.5">{f.title}</h3>
+                  <p className="text-gray-500 text-sm leading-relaxed">{f.desc}</p>
+                </div>
+              </motion.div>
+            </FadeIn>
+          ))}
+        </div>
+      </section>
+
+      <Footer />
     </div>
   )
-}
-
-function Feature({icon , title , des}){
-    return(
-        <motion.div 
-        whileHover={{ y: -12, rotateX: 8, rotateY: -8, scale: 1.05 }}
-       transition={{ type: "spring", stiffness: 200, damping: 18 }}
-        className='relative rounded-2xl p-6
-        bg-gradient-to-br from-black/90 via-black/80 to-black/90
-        backdrop-blur-2xl
-        border border-white/10
-        shadow-[0_30px_80px_rgba(0,0,0,0.7)]
-        text-white'
-         style={{ transformStyle: "preserve-3d" }}
-        >
-         
-            <div className='relative z-10' style={{ transform: "translateZ(30px)" }}>
-                 <div className="text-4xl mb-3">{icon}</div>
-        <h3 className="text-lg font-semibold mb-2">{title}</h3>
-        <p className="text-gray-300 text-sm leading-relaxed">{des}</p>
-
-            </div>
-          
-
-
-        </motion.div>
-    )
 }
 
 export default Home
