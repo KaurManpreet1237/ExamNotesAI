@@ -10,6 +10,51 @@ import { useDispatch } from "react-redux";
 import { setUserData } from "../redux/userSlice";
 import { Link, useNavigate } from "react-router-dom";
 
+// ─── Shared password validator (same rules as backend) ────────────────────────
+const validatePassword = (pwd) => {
+  if (!pwd) return "Password is required.";
+  if (pwd.length < 8) return "Password must be at least 8 characters.";
+  if (!/[A-Z]/.test(pwd)) return "Must include at least one uppercase letter (A–Z).";
+  if (!/[a-z]/.test(pwd)) return "Must include at least one lowercase letter (a–z).";
+  if (!/\d/.test(pwd)) return "Must include at least one number (0–9).";
+  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(pwd))
+    return "Must include at least one special character (!@#$% etc).";
+  return null;
+};
+
+// ─── Password strength bar ────────────────────────────────────────────────────
+function PasswordStrength({ password }) {
+  if (!password) return null;
+  const score = [
+    password.length >= 8,
+    /[A-Z]/.test(password),
+    /[a-z]/.test(password),
+    /\d/.test(password),
+    /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(password),
+  ].filter(Boolean).length;
+  const colors = ["", "bg-red-500", "bg-orange-400", "bg-yellow-400", "bg-green-400", "bg-green-500"];
+  const labels = ["", "Weak", "Fair", "Good", "Strong", "Very strong"];
+  return (
+    <div className="mt-2">
+      <div className="flex gap-1 mb-1">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div
+            key={i}
+            className={`h-1 flex-1 rounded-full transition-all duration-300 ${
+              i <= score ? colors[score] : "bg-white/10"
+            }`}
+          />
+        ))}
+      </div>
+      {score > 0 && (
+        <p className={`text-xs ${score >= 4 ? "text-green-400" : "text-gray-500"}`}>
+          {labels[score]}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Signup() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -34,10 +79,11 @@ function Signup() {
       setError("Please fill in all fields.");
       return;
     }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
+
+    // Frontend strong password validation
+    const pwdError = validatePassword(password);
+    if (pwdError) { setError(pwdError); return; }
+
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
       return;
@@ -82,7 +128,6 @@ function Signup() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4 py-12">
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -93,15 +138,13 @@ function Signup() {
         <p className="text-sm text-gray-500 mt-1">AI-powered exam-oriented notes & revision</p>
       </motion.div>
 
-      {/* Card */}
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.1 }}
         className="w-full max-w-md rounded-2xl
           bg-gradient-to-br from-black/90 via-black/85 to-black/90
-          border border-white/10
-          shadow-[0_30px_80px_rgba(0,0,0,0.4)]
+          border border-white/10 shadow-[0_30px_80px_rgba(0,0,0,0.4)]
           px-8 py-10 text-white"
       >
         <h2 className="text-2xl font-bold mb-1">Create your account</h2>
@@ -109,7 +152,7 @@ function Signup() {
           Get <span className="text-white font-semibold">50 free credits</span> instantly — no card required.
         </p>
 
-        {/* Google Button */}
+        {/* Google */}
         <motion.button
           onClick={handleGoogleAuth}
           disabled={googleLoading || loading}
@@ -117,22 +160,21 @@ function Signup() {
           whileTap={{ scale: 0.98 }}
           className="w-full flex items-center justify-center gap-3
             bg-white/10 hover:bg-white/15 border border-white/15
-            text-white font-medium rounded-xl py-3 transition-all duration-200
+            text-white font-medium rounded-xl py-3 transition-all
             disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <FcGoogle size={20} />
           {googleLoading ? "Signing up…" : "Continue with Google"}
         </motion.button>
 
-        {/* Divider */}
         <div className="flex items-center gap-3 my-6">
           <div className="flex-1 h-px bg-white/10" />
           <span className="text-gray-500 text-xs uppercase tracking-widest">or</span>
           <div className="flex-1 h-px bg-white/10" />
         </div>
 
-        {/* Manual Signup Form */}
         <form onSubmit={handleSignup} className="space-y-4">
+          {/* Name */}
           <div>
             <label className="block text-sm text-gray-300 mb-1.5">Full name</label>
             <input
@@ -148,6 +190,7 @@ function Signup() {
             />
           </div>
 
+          {/* Email */}
           <div>
             <label className="block text-sm text-gray-300 mb-1.5">Email address</label>
             <input
@@ -163,6 +206,7 @@ function Signup() {
             />
           </div>
 
+          {/* Password */}
           <div>
             <label className="block text-sm text-gray-300 mb-1.5">Password</label>
             <div className="relative">
@@ -171,7 +215,7 @@ function Signup() {
                 name="password"
                 value={form.password}
                 onChange={handleChange}
-                placeholder="Min. 6 characters"
+                placeholder="Min 8 chars, A-Z, 0-9, symbol"
                 autoComplete="new-password"
                 className="w-full bg-white/5 border border-white/15 rounded-xl px-4 py-3 pr-12
                   text-white placeholder-gray-500 text-sm
@@ -185,8 +229,10 @@ function Signup() {
                 {showPassword ? <AiOutlineEyeInvisible size={18} /> : <AiOutlineEye size={18} />}
               </button>
             </div>
+            <PasswordStrength password={form.password} />
           </div>
 
+          {/* Confirm password */}
           <div>
             <label className="block text-sm text-gray-300 mb-1.5">Confirm password</label>
             <div className="relative">
@@ -209,6 +255,16 @@ function Signup() {
                 {showConfirm ? <AiOutlineEyeInvisible size={18} /> : <AiOutlineEye size={18} />}
               </button>
             </div>
+            {/* Live match indicator */}
+            {form.confirmPassword && (
+              <p className={`text-xs mt-1.5 ${
+                form.password === form.confirmPassword ? "text-green-400" : "text-red-400"
+              }`}>
+                {form.password === form.confirmPassword
+                  ? "✓ Passwords match"
+                  : "✗ Passwords do not match"}
+              </p>
+            )}
           </div>
 
           {error && (
@@ -227,8 +283,7 @@ function Signup() {
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.99 }}
             className="w-full bg-white text-black font-semibold rounded-xl py-3
-              hover:bg-gray-100 transition-all duration-200
-              disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+              hover:bg-gray-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
             {loading ? "Creating account…" : "Create Account"}
           </motion.button>
