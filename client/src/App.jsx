@@ -25,21 +25,30 @@ function App() {
 
   return (
     <Routes>
-      {/* Protected routes */}
-      <Route path='/' element={userData ? <Home /> : <Navigate to="/login" replace />} />
-      <Route path='/history' element={userData ? <History /> : <Navigate to="/login" replace />} />
-      <Route path='/notes' element={userData ? <Notes /> : <Navigate to="/login" replace />} />
-      <Route path='/pricing' element={userData ? <Pricing /> : <Navigate to="/login" replace />} />
+      {/*
+        ROOT ROUTE — public landing page for guests, dashboard for logged-in users.
+        Previously this redirected unauthenticated users to /login — now it shows
+        the landing page (Auth.jsx) instead, so the app always starts with a home page.
+      */}
+      <Route
+        path='/'
+        element={userData ? <Home /> : <Auth />}
+      />
 
-      {/* Auth routes — redirect if already logged in */}
-      <Route path='/auth' element={userData ? <Navigate to="/" replace /> : <Auth />} />
-      <Route path='/login' element={userData ? <Navigate to="/" replace /> : <Login />} />
-      <Route path='/signup' element={userData ? <Navigate to="/" replace /> : <Signup />} />
+      {/* Protected routes — redirect to landing if not authenticated */}
+      <Route path='/history'  element={userData ? <History />  : <Navigate to="/" replace />} />
+      <Route path='/notes'    element={userData ? <Notes />    : <Navigate to="/" replace />} />
+      <Route path='/pricing'  element={userData ? <Pricing />  : <Navigate to="/" replace />} />
+
+      {/* Auth routes — redirect to dashboard if already logged in */}
+      <Route path='/auth'           element={userData ? <Navigate to="/" replace /> : <Auth />} />
+      <Route path='/login'          element={userData ? <Navigate to="/" replace /> : <Login />} />
+      <Route path='/signup'         element={userData ? <Navigate to="/" replace /> : <Signup />} />
       <Route path='/forgot-password' element={userData ? <Navigate to="/" replace /> : <ForgotPassword />} />
 
-      {/* Payment callbacks */}
+      {/* Payment callbacks — always accessible */}
       <Route path='/payment-success' element={<PaymentSuccess />} />
-      <Route path='/payment-failed' element={<PaymentFailed />} />
+      <Route path='/payment-failed'  element={<PaymentFailed />} />
     </Routes>
   )
 }
