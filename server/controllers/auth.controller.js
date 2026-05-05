@@ -3,7 +3,7 @@ import { getToken } from "../utils/token.js";
 import { sendOtpEmail } from "../services/email.service.js";
 import crypto from "crypto";
 
-// ─── Strong password validation (same rules as frontend) ─────────────────────
+// ─── Password validation ──────────────────────────────────────────────────────
 const PASSWORD_REGEX =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]).{8,}$/;
 
@@ -12,6 +12,14 @@ const validatePasswordStrength = (password) => {
     return "Password must be at least 8 characters and include an uppercase letter, lowercase letter, number, and special character.";
   }
   return null;
+};
+
+// ─── Determine role for new user ──────────────────────────────────────────────
+// If ADMIN_EMAIL env var matches the signing-up email → assign admin role.
+// Only ONE admin exists. All others are "user".
+const resolveRole = (email) => {
+  const adminEmail = process.env.ADMIN_EMAIL?.toLowerCase().trim();
+  return adminEmail && email.toLowerCase().trim() === adminEmail ? "admin" : "user";
 };
 
 // ─── Cookie helper ────────────────────────────────────────────────────────────
@@ -35,7 +43,13 @@ export const googleAuth = async (req, res) => {
 
     let user = await UserModel.findOne({ email });
     if (!user) {
-      user = await UserModel.create({ name, email, isGoogleUser: true, isVerified: true });
+      user = await UserModel.create({
+        name,
+        email,
+        isGoogleUser: true,
+        isVerified: true,
+        role: resolveRole(email), // assign admin role if email matches ADMIN_EMAIL
+      });
     } else if (!user.isGoogleUser) {
       user.isGoogleUser = true;
       await user.save();
@@ -68,7 +82,6 @@ export const signup = async (req, res) => {
 
     const existing = await UserModel.findOne({ email: email.toLowerCase() });
     if (existing) {
-      // Google-only user adding a manual password for the first time
       if (existing.isGoogleUser && !existing.password) {
         existing.password = password;
         existing.isVerified = true;
@@ -86,6 +99,7 @@ export const signup = async (req, res) => {
       password,
       isGoogleUser: false,
       isVerified: true,
+      role: resolveRole(email), // assign admin role if email matches ADMIN_EMAIL
     });
 
     const token = await getToken(user._id);
@@ -128,11 +142,6 @@ export const login = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SEND OTP — POST /api/auth/send-otp
-//
-// FIX: Removed the isGoogleUser block.
-// Google users who never set a manual password are now allowed to go through
-// the forgot-password flow to SET a password for the first time.
-// The only hard requirement is that the account exists.
 // ─────────────────────────────────────────────────────────────────────────────
 export const sendOtp = async (req, res) => {
   try {
@@ -143,10 +152,9 @@ export const sendOtp = async (req, res) => {
     if (!user)
       return res.status(404).json({ message: "No account found with this email." });
 
-    // Generate a cryptographically secure 6-digit OTP
     const otp = crypto.randomInt(100000, 999999).toString();
     user.otp = otp;
-    user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
     user.otpVerified = false;
     await user.save({ validateBeforeSave: false });
 
@@ -159,7 +167,6 @@ export const sendOtp = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VERIFY OTP — POST /api/auth/verify-otp
-// Sets otpVerified = true so reset-password can proceed
 // ─────────────────────────────────────────────────────────────────────────────
 export const verifyOtp = async (req, res) => {
   try {
@@ -170,10 +177,8 @@ export const verifyOtp = async (req, res) => {
     const user = await UserModel.findOne({ email: email.toLowerCase() });
     if (!user || !user.otp)
       return res.status(400).json({ message: "OTP not found. Please request a new one." });
-
     if (user.otpExpiry < new Date())
       return res.status(400).json({ message: "OTP has expired. Please request a new one." });
-
     if (user.otp !== otp)
       return res.status(400).json({ message: "Invalid OTP. Please try again." });
 
@@ -188,11 +193,6 @@ export const verifyOtp = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RESET PASSWORD — POST /api/auth/reset-password
-//
-// FIX: Works for BOTH manual and Google users.
-// A Google user with no prior password can now SET one via this flow.
-// After this succeeds they can log in with email + password in addition
-// to their existing Google login — both methods work simultaneously.
 // ─────────────────────────────────────────────────────────────────────────────
 export const resetPassword = async (req, res) => {
   try {
@@ -206,31 +206,20 @@ export const resetPassword = async (req, res) => {
     const user = await UserModel.findOne({ email: email.toLowerCase() });
     if (!user || !user.otp)
       return res.status(400).json({ message: "OTP not found. Please start over." });
-
-    // Enforce that /verify-otp was called first — cannot be bypassed
     if (!user.otpVerified)
-      return res.status(403).json({
-        message: "OTP has not been verified. Please verify your OTP first.",
-      });
-
+      return res.status(403).json({ message: "OTP has not been verified. Please verify your OTP first." });
     if (user.otpExpiry < new Date())
       return res.status(400).json({ message: "OTP session expired. Please start over." });
-
     if (user.otp !== otp)
       return res.status(400).json({ message: "Invalid OTP." });
 
-    // Set/update password — pre-save hook in user.model.js hashes it
     user.password = newPassword;
     user.otp = null;
     user.otpExpiry = null;
     user.otpVerified = false;
     await user.save();
 
-    const message = user.isGoogleUser
-      ? "Password set successfully. You can now log in with your email and password."
-      : "Password reset successfully. You can now log in.";
-
-    return res.status(200).json({ message });
+    return res.status(200).json({ message: "Password reset successfully. You can now log in." });
   } catch (error) {
     return res.status(500).json({ message: `Reset password error: ${error.message}` });
   }

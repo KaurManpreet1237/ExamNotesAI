@@ -10,6 +10,9 @@ import { useDispatch } from "react-redux";
 import { setUserData } from "../redux/userSlice";
 import { Link, useNavigate } from "react-router-dom";
 
+// Helper: where to send user after successful login
+const getRedirectPath = (user) => user?.role === "admin" ? "/admin" : "/";
+
 function Login() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -40,7 +43,8 @@ function Login() {
         { withCredentials: true }
       );
       dispatch(setUserData(result.data));
-      navigate("/");
+      // ← Admin → /admin, regular user → /
+      navigate(getRedirectPath(result.data));
     } catch (err) {
       setError(err.response?.data?.message || "Login failed. Please try again.");
     } finally {
@@ -60,7 +64,8 @@ function Login() {
         { withCredentials: true }
       );
       dispatch(setUserData(result.data));
-      navigate("/");
+      // ← Admin → /admin, regular user → /
+      navigate(getRedirectPath(result.data));
     } catch (err) {
       setError(err.response?.data?.message || "Google sign-in failed.");
     } finally {

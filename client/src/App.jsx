@@ -5,6 +5,7 @@ import Auth from './pages/Auth'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import ForgotPassword from './pages/ForgotPassword'
+import AdminPanel from './pages/AdminPanel'
 import { getCurrentUser } from './services/api'
 import { useDispatch, useSelector } from 'react-redux'
 import History from './pages/History'
@@ -22,31 +23,47 @@ function App() {
   }, [dispatch])
 
   const { userData } = useSelector((state) => state.user)
+  const isAdmin = userData?.role === "admin"
 
   return (
     <Routes>
       {/*
-        ROOT ROUTE — public landing page for guests, dashboard for logged-in users.
-        Previously this redirected unauthenticated users to /login — now it shows
-        the landing page (Auth.jsx) instead, so the app always starts with a home page.
+        ROOT ROUTE:
+        - Guest         → landing page (Auth.jsx)
+        - Admin user    → redirect straight to /admin panel
+        - Regular user  → dashboard (Home.jsx)
       */}
       <Route
         path='/'
-        element={userData ? <Home /> : <Auth />}
+        element={
+          !userData ? <Auth /> :
+          isAdmin   ? <Navigate to="/admin" replace /> :
+                      <Home />
+        }
       />
 
-      {/* Protected routes — redirect to landing if not authenticated */}
-      <Route path='/history'  element={userData ? <History />  : <Navigate to="/" replace />} />
-      <Route path='/notes'    element={userData ? <Notes />    : <Navigate to="/" replace />} />
-      <Route path='/pricing'  element={userData ? <Pricing />  : <Navigate to="/" replace />} />
+      {/* ── Admin route ── only accessible to logged-in admins ── */}
+      <Route
+        path='/admin'
+        element={
+          !userData ? <Navigate to="/" replace /> :
+          isAdmin   ? <AdminPanel /> :
+                      <Navigate to="/" replace />
+        }
+      />
 
-      {/* Auth routes — redirect to dashboard if already logged in */}
-      <Route path='/auth'           element={userData ? <Navigate to="/" replace /> : <Auth />} />
-      <Route path='/login'          element={userData ? <Navigate to="/" replace /> : <Login />} />
-      <Route path='/signup'         element={userData ? <Navigate to="/" replace /> : <Signup />} />
+      {/* ── Protected user routes ── redirect non-logged-in to landing ── */}
+      <Route path='/history' element={userData && !isAdmin ? <History /> : <Navigate to="/" replace />} />
+      <Route path='/notes'   element={userData && !isAdmin ? <Notes />   : <Navigate to="/" replace />} />
+      <Route path='/pricing' element={userData && !isAdmin ? <Pricing /> : <Navigate to="/" replace />} />
+
+      {/* ── Auth routes ── redirect to correct dashboard if already logged in ── */}
+      <Route path='/auth'            element={userData ? <Navigate to="/" replace /> : <Auth />} />
+      <Route path='/login'           element={userData ? <Navigate to="/" replace /> : <Login />} />
+      <Route path='/signup'          element={userData ? <Navigate to="/" replace /> : <Signup />} />
       <Route path='/forgot-password' element={userData ? <Navigate to="/" replace /> : <ForgotPassword />} />
 
-      {/* Payment callbacks — always accessible */}
+      {/* ── Payment callbacks ── always accessible ── */}
       <Route path='/payment-success' element={<PaymentSuccess />} />
       <Route path='/payment-failed'  element={<PaymentFailed />} />
     </Routes>
