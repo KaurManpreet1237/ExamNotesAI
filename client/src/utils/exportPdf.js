@@ -1,11 +1,20 @@
 /**
  * exportPdf.js — html2canvas + jsPDF
  *
- * ROOT CAUSE OF oklab ERROR:
- * html2canvas crashes at parseTree() reading getComputedStyle() from the
- * LIVE DOM before onclone() is ever called. Patching only the cloned doc
- * is too late. This file patches ALL <style> tags in the live document
- * HEAD before html2canvas runs, then restores them after.
+ * THE REAL FIX FOR oklab/oklch:
+ *
+ * html2canvas crashes at parseTree() when it calls window.getComputedStyle()
+ * on live DOM elements. The browser resolves Tailwind v4 CSS variables like
+ *   --color-indigo-600: oklch(...)
+ * and returns "oklch(...)" as a computed value. html2canvas can't parse it.
+ *
+ * Patching <style> tags doesn't help when:
+ *   1. CSS comes from a <link> stylesheet (production build) — cross-origin, unmodifiable
+ *   2. Browser's CSSOM has already cached the variable resolutions
+ *
+ * SOLUTION: Monkey-patch window.getComputedStyle to wrap its return value in
+ * a Proxy that intercepts property reads and converts oklch/oklab → rgb()
+ * before html2canvas sees them. Restored immediately after capture.
  */
 
 const A4_W_MM       = 210
@@ -13,7 +22,7 @@ const A4_H_MM       = 297
 const CAPTURE_WIDTH = 960
 const SCALE         = 2
 
-// ─── OKLab → linear sRGB → gamma sRGB ────────────────────────────────────────
+// ─── OKLab → sRGB (shared math for both oklch and oklab) ─────────────────────
 function oklabToRgb(L, a, b) {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b
@@ -27,7 +36,6 @@ function oklabToRgb(L, a, b) {
   return `rgb(${g(rL)},${g(gL)},${g(bL)})`
 }
 
-// oklch uses polar coords — convert to Lab then delegate
 function oklchToRgb(L, C, H) {
   const rad = (H * Math.PI) / 180
   return oklabToRgb(L, C * Math.cos(rad), C * Math.sin(rad))
@@ -50,6 +58,8 @@ const OKLCH_RE = /oklch\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]
 const OKLAB_RE = /oklab\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
 
 function replaceModernColors(str) {
+  if (typeof str !== 'string') return str
+  if (!str.includes('oklch') && !str.includes('oklab')) return str
   let out = str.replace(OKLCH_RE, (_, l, c, h, alpha) =>
     withAlpha(oklchToRgb(parseVal(l), parseVal(c), parseVal(h)), alpha)
   )
@@ -59,13 +69,41 @@ function replaceModernColors(str) {
   return out
 }
 
-// ─── KEY FIX: Patch live <style> tags BEFORE html2canvas runs ─────────────────
-// html2canvas calls getComputedStyle() on the live DOM during parseTree() —
-// this happens BEFORE onclone(). So we must replace unsupported color functions
-// in the real document's stylesheets first, then restore them afterwards.
+// ─── THE KEY FIX ─────────────────────────────────────────────────────────────
+// Monkey-patch window.getComputedStyle so html2canvas receives rgb() values
+// instead of oklch/oklab — regardless of where the CSS comes from.
+function patchGetComputedStyle() {
+  const original = window.getComputedStyle
+
+  window.getComputedStyle = function (...args) {
+    const styles = original.apply(this, args)
+
+    return new Proxy(styles, {
+      get(target, prop) {
+        const val = target[prop]
+
+        // Convert string values that contain modern color functions
+        if (typeof val === 'string' &&
+            (val.includes('oklch') || val.includes('oklab'))) {
+          return replaceModernColors(val)
+        }
+
+        // Wrap functions so `this` still points at the real CSSStyleDeclaration
+        if (typeof val === 'function') return val.bind(target)
+
+        return val
+      }
+    })
+  }
+
+  // Return restore function
+  return () => { window.getComputedStyle = original }
+}
+
+// ─── Also patch live <style> tags (belt-and-suspenders) ──────────────────────
+// Covers cases where html2canvas reads cssText directly from stylesheets
 function patchLiveStyles() {
   const patches = []
-
   document.querySelectorAll('style').forEach((el) => {
     const original = el.textContent
     if (original.includes('oklch') || original.includes('oklab')) {
@@ -73,33 +111,27 @@ function patchLiveStyles() {
       patches.push({ el, original })
     }
   })
-
-  // Return restore function
   return () => patches.forEach(({ el, original }) => { el.textContent = original })
 }
 
-// ─── Patch cloned document (secondary pass — catches any missed inline styles) ──
+// ─── Patch cloned document (third-layer safety net) ───────────────────────────
 function patchClone(clonedDoc, captureWidth) {
-  // 1. Fix remaining oklch/oklab in <style> tags of the clone
   clonedDoc.querySelectorAll('style').forEach((el) => {
     const t = el.textContent
     if (t.includes('oklch') || t.includes('oklab'))
       el.textContent = replaceModernColors(t)
   })
 
-  // 2. Fix inline style attributes
   clonedDoc.querySelectorAll('[style]').forEach((el) => {
     const s = el.getAttribute('style')
     if (s && (s.includes('oklch') || s.includes('oklab')))
       el.setAttribute('style', replaceModernColors(s))
   })
 
-  // 3. Hide toolbar / button elements
   clonedDoc.querySelectorAll('[data-pdf-hide]').forEach((el) => {
     el.style.display = 'none'
   })
 
-  // 4. Fix gradient clip-text (renders as opaque block in html2canvas)
   clonedDoc.querySelectorAll('.bg-clip-text, .text-transparent').forEach((el) => {
     el.style.backgroundImage      = 'none'
     el.style.webkitBackgroundClip = 'unset'
@@ -108,7 +140,6 @@ function patchClone(clonedDoc, captureWidth) {
     el.style.color                = '#4338ca'
   })
 
-  // 5. Lock root to CAPTURE_WIDTH — prevents viewport-dependent scaling
   const root = clonedDoc.body.firstElementChild
   if (root) {
     root.style.width    = captureWidth + 'px'
@@ -222,7 +253,6 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   const html2canvas = h2cMod.default
   const { jsPDF }   = jsPDFMod
 
-  // Snapshot original inline styles
   const origStyles = {
     background: element.style.background,
     padding:    element.style.padding,
@@ -232,7 +262,6 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
     boxSizing:  element.style.boxSizing,
   }
 
-  // Force desktop-width render (prevents mobile scaling)
   element.style.background = '#ffffff'
   element.style.padding    = '24px'
   element.style.width      = CAPTURE_WIDTH + 'px'
@@ -240,13 +269,13 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   element.style.maxWidth   = CAPTURE_WIDTH + 'px'
   element.style.boxSizing  = 'border-box'
 
-  const removeHeader    = injectHeader(element, topic)
-  const restoreSvgs     = fixSvgDimensions(element)
+  const removeHeader        = injectHeader(element, topic)
+  const restoreSvgs         = fixSvgDimensions(element)
 
-  // ── CRITICAL: patch live <style> tags NOW, before html2canvas parseTree ──
-  const restoreLiveStyles = patchLiveStyles()
+  // Apply all three layers of protection before html2canvas runs
+  const restoreComputedStyle = patchGetComputedStyle()  // ← intercepts getComputedStyle()
+  const restoreLiveStyles    = patchLiveStyles()         // ← patches <style> tags
 
-  // Let Recharts/Mermaid finish painting
   await new Promise((r) => setTimeout(r, 400))
 
   let fullCanvas
@@ -265,14 +294,14 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
       onclone:         (clonedDoc) => patchClone(clonedDoc, CAPTURE_WIDTH),
     })
   } finally {
-    // Always restore — even if capture throws
+    // Always restore — even if html2canvas throws
     removeHeader()
     restoreSvgs()
-    restoreLiveStyles()               // ← restore original Tailwind styles
+    restoreComputedStyle()   // ← restore original getComputedStyle
+    restoreLiveStyles()      // ← restore original <style> content
     Object.assign(element.style, origStyles)
   }
 
-  // Build pages with smart breaks
   const pageHeightPx = Math.round((A4_H_MM / A4_W_MM) * fullCanvas.width)
   const pages  = []
   let   startY = 0
