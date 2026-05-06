@@ -31,8 +31,11 @@ function RechartSetUp({ charts }) {
   return (
     <div className="space-y-8">
       {charts.map((chart, index) => (
-        <div key={index}
+        <div
+          key={index}
           className="border border-gray-200 rounded-2xl p-4 sm:p-5 bg-white shadow-sm"
+          // data-pdf-chart enables targeted CSS in exportPdf print stylesheet
+          data-pdf-chart="true"
         >
           {/* Chart title */}
           <h4 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -41,21 +44,29 @@ function RechartSetUp({ charts }) {
           </h4>
 
           {/*
-            CRITICAL: Use a fixed pixel height (not 100%) for the outer div.
-            ResponsiveContainer reads the parent's computed height.
-            When height is "100%" of a zero-height container, Recharts throws
-            "width(-1) height(-1)" and doesn't render.
-            Fixed 288px guarantees a non-zero bounding box.
+            CRITICAL: Fixed pixel height container.
+            - ResponsiveContainer reads parent's computed height.
+            - "100%" on a zero-height parent → Recharts renders nothing.
+            - 288px fixed guarantees a valid bounding box on all devices.
+            - overflow: visible ensures chart labels/tooltips are not clipped.
+            - This height is intentional — do NOT change to percentage.
           */}
-          <div style={{ width: "100%", height: "288px" }}>
+          <div
+            style={{
+              width: "100%",
+              height: "288px",
+              overflow: "visible",
+              position: "relative",
+            }}
+          >
             <ResponsiveContainer width="100%" height="100%">
 
               {chart.type === "bar" ? (
                 <BarChart
                   data={chart.data}
-                  margin={{ top: 10, right: 10, left: 0, bottom: 5 }}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 8 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                   <XAxis
                     dataKey="name"
                     tick={{ fontSize: 12, fill: "#6b7280" }}
@@ -66,9 +77,10 @@ function RechartSetUp({ charts }) {
                     tick={{ fontSize: 11, fill: "#6b7280" }}
                     axisLine={false}
                     tickLine={false}
+                    width={32}
                   />
                   <Tooltip content={<ChartTooltip />} />
-                  <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={60}>
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={64}>
                     {chart.data.map((_, i) => (
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
@@ -78,9 +90,9 @@ function RechartSetUp({ charts }) {
               ) : chart.type === "line" ? (
                 <LineChart
                   data={chart.data}
-                  margin={{ top: 10, right: 10, left: 0, bottom: 5 }}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 8 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                   <XAxis
                     dataKey="name"
                     tick={{ fontSize: 12, fill: "#6b7280" }}
@@ -91,6 +103,7 @@ function RechartSetUp({ charts }) {
                     tick={{ fontSize: 11, fill: "#6b7280" }}
                     axisLine={false}
                     tickLine={false}
+                    width={32}
                   />
                   <Tooltip content={<ChartTooltip />} />
                   <Line
@@ -132,9 +145,12 @@ function RechartSetUp({ charts }) {
 
               ) : (
                 // Fallback: bar chart for unknown types
-                <BarChart data={chart.data}>
-                  <XAxis dataKey="name" />
-                  <YAxis />
+                <BarChart
+                  data={chart.data}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 8 }}
+                >
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 11 }} width={32} />
                   <Tooltip />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                     {chart.data.map((_, i) => (
