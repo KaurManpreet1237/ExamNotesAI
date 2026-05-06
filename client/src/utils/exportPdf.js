@@ -1,20 +1,11 @@
 /**
  * exportPdf.js — html2canvas + jsPDF
  *
- * THE REAL FIX FOR oklab/oklch:
- *
- * html2canvas crashes at parseTree() when it calls window.getComputedStyle()
- * on live DOM elements. The browser resolves Tailwind v4 CSS variables like
- *   --color-indigo-600: oklch(...)
- * and returns "oklch(...)" as a computed value. html2canvas can't parse it.
- *
- * Patching <style> tags doesn't help when:
- *   1. CSS comes from a <link> stylesheet (production build) — cross-origin, unmodifiable
- *   2. Browser's CSSOM has already cached the variable resolutions
- *
- * SOLUTION: Monkey-patch window.getComputedStyle to wrap its return value in
- * a Proxy that intercepts property reads and converts oklch/oklab → rgb()
- * before html2canvas sees them. Restored immediately after capture.
+ * Fixes all 3 PDF issues:
+ *   1. oklch/oklab → rgb() (4-layer interception)
+ *   2. Faded text: dark theme grays invisible on white PDF
+ *   3. Numbered list misalignment
+ *   4. Diagram/chart cut at page breaks
  */
 
 const A4_W_MM       = 210
@@ -22,7 +13,7 @@ const A4_H_MM       = 297
 const CAPTURE_WIDTH = 960
 const SCALE         = 2
 
-// ─── OKLab → sRGB (shared math for both oklch and oklab) ─────────────────────
+// ─── Color converters ─────────────────────────────────────────────────────────
 function oklabToRgb(L, a, b) {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b
@@ -32,26 +23,23 @@ function oklabToRgb(L, a, b) {
   const gL = -1.2684380046 * ll + 2.6097574011 * mm - 0.3413193965 * ss
   const bL = -0.0041960863 * ll - 0.7034186147 * mm + 1.7076147010 * ss
   const g  = (x) => Math.round(Math.max(0, Math.min(1,
-    x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)) * 255)
+    x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1/2.4) - 0.055)) * 255)
   return `rgb(${g(rL)},${g(gL)},${g(bL)})`
 }
-
 function oklchToRgb(L, C, H) {
-  const rad = (H * Math.PI) / 180
-  return oklabToRgb(L, C * Math.cos(rad), C * Math.sin(rad))
+  const r = (H * Math.PI) / 180
+  return oklabToRgb(L, C * Math.cos(r), C * Math.sin(r))
 }
-
 function parseVal(v) {
   if (!v || v === 'none') return 0
   if (typeof v === 'string' && v.endsWith('%')) return parseFloat(v) / 100
   return parseFloat(v)
 }
-
-function withAlpha(rgbStr, alpha) {
-  if (!alpha || alpha === '1' || alpha === '100%') return rgbStr
+function withAlpha(rgb, alpha) {
+  if (!alpha || alpha === '1' || alpha === '100%') return rgb
   const a = parseVal(alpha)
-  const m = rgbStr.match(/\d+/g)
-  return m ? `rgba(${m[0]},${m[1]},${m[2]},${a})` : rgbStr
+  const m = rgb.match(/\d+/g)
+  return m ? `rgba(${m[0]},${m[1]},${m[2]},${a})` : rgb
 }
 
 const OKLCH_RE = /oklch\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
@@ -60,112 +48,304 @@ const OKLAB_RE = /oklab\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]
 function replaceModernColors(str) {
   if (typeof str !== 'string') return str
   if (!str.includes('oklch') && !str.includes('oklab')) return str
-  let out = str.replace(OKLCH_RE, (_, l, c, h, alpha) =>
-    withAlpha(oklchToRgb(parseVal(l), parseVal(c), parseVal(h)), alpha)
-  )
+  let out = str.replace(OKLCH_RE, (_, l, c, h, a) =>
+    withAlpha(oklchToRgb(parseVal(l), parseVal(c), parseVal(h)), a))
   out = out.replace(OKLAB_RE, (_, l, a, b, alpha) =>
-    withAlpha(oklabToRgb(parseVal(l), parseVal(a), parseVal(b)), alpha)
-  )
+    withAlpha(oklabToRgb(parseVal(l), parseVal(a), parseVal(b)), alpha))
   return out
 }
 
-// ─── THE KEY FIX ─────────────────────────────────────────────────────────────
-// Monkey-patch window.getComputedStyle so html2canvas receives rgb() values
-// instead of oklch/oklab — regardless of where the CSS comes from.
+// ─── Layer 1: :root CSS variable override ────────────────────────────────────
+function injectCssVariableOverrides() {
+  const rs = window.getComputedStyle(document.documentElement)
+  const ov = []
+  for (let i = 0; i < rs.length; i++) {
+    const p = rs[i]
+    if (!p.startsWith('--')) continue
+    const v = rs.getPropertyValue(p).trim()
+    if (!v.includes('oklch') && !v.includes('oklab')) continue
+    ov.push(`${p}: ${replaceModernColors(v)};`)
+  }
+  if (!ov.length) return () => {}
+  const s = document.createElement('style')
+  s.id = '__pdf_var_override__'
+  s.textContent = `:root { ${ov.join(' ')} }`
+  document.head.appendChild(s)
+  return () => s.remove()
+}
+
+// ─── Layer 2: getComputedStyle proxy ─────────────────────────────────────────
 function patchGetComputedStyle() {
-  const original = window.getComputedStyle
-
-  window.getComputedStyle = function (...args) {
-    const styles = original.apply(this, args)
-
+  const orig = window.getComputedStyle
+  window.getComputedStyle = function (...a) {
+    const styles = orig.apply(this, a)
     return new Proxy(styles, {
-      get(target, prop) {
-        const val = target[prop]
-
-        // Convert string values that contain modern color functions
-        if (typeof val === 'string' &&
-            (val.includes('oklch') || val.includes('oklab'))) {
-          return replaceModernColors(val)
-        }
-
-        // Wrap functions so `this` still points at the real CSSStyleDeclaration
-        if (typeof val === 'function') return val.bind(target)
-
-        return val
+      get(t, p) {
+        const v = t[p]
+        if (typeof v === 'string' && (v.includes('oklch') || v.includes('oklab')))
+          return replaceModernColors(v)
+        return typeof v === 'function' ? v.bind(t) : v
       }
     })
   }
-
-  // Return restore function
-  return () => { window.getComputedStyle = original }
+  return () => { window.getComputedStyle = orig }
 }
 
-// ─── Also patch live <style> tags (belt-and-suspenders) ──────────────────────
-// Covers cases where html2canvas reads cssText directly from stylesheets
+// ─── Layer 3: live <style> tag patching ──────────────────────────────────────
 function patchLiveStyles() {
   const patches = []
   document.querySelectorAll('style').forEach((el) => {
-    const original = el.textContent
-    if (original.includes('oklch') || original.includes('oklab')) {
-      el.textContent = replaceModernColors(original)
-      patches.push({ el, original })
+    const orig = el.textContent
+    if (orig.includes('oklch') || orig.includes('oklab')) {
+      el.textContent = replaceModernColors(orig)
+      patches.push({ el, orig })
     }
   })
-  return () => patches.forEach(({ el, original }) => { el.textContent = original })
+  return () => patches.forEach(({ el, orig }) => { el.textContent = orig })
 }
 
-// ─── Patch cloned document (third-layer safety net) ───────────────────────────
-function patchClone(clonedDoc, captureWidth) {
-  clonedDoc.querySelectorAll('style').forEach((el) => {
+// ─── Layer 4: onclone — color + layout comprehensive fix ─────────────────────
+function patchClone(doc, captureWidth) {
+
+  // 4a. Fix oklch/oklab in cloned styles
+  doc.querySelectorAll('style').forEach((el) => {
     const t = el.textContent
-    if (t.includes('oklch') || t.includes('oklab'))
-      el.textContent = replaceModernColors(t)
+    if (t.includes('oklch') || t.includes('oklab')) el.textContent = replaceModernColors(t)
   })
-
-  clonedDoc.querySelectorAll('[style]').forEach((el) => {
+  doc.querySelectorAll('[style]').forEach((el) => {
     const s = el.getAttribute('style')
-    if (s && (s.includes('oklch') || s.includes('oklab')))
-      el.setAttribute('style', replaceModernColors(s))
+    if (s && (s.includes('oklch') || s.includes('oklab'))) el.setAttribute('style', replaceModernColors(s))
   })
 
-  clonedDoc.querySelectorAll('[data-pdf-hide]').forEach((el) => {
-    el.style.display = 'none'
-  })
+  // 4b. Inject :root variable overrides into clone
+  const rs = window.getComputedStyle(document.documentElement)
+  const ov = []
+  for (let i = 0; i < rs.length; i++) {
+    const p = rs[i]
+    if (!p.startsWith('--')) continue
+    const v = rs.getPropertyValue(p).trim()
+    if (v.includes('oklch') || v.includes('oklab')) ov.push(`${p}: ${replaceModernColors(v)};`)
+  }
+  if (ov.length) {
+    const s = doc.createElement('style')
+    s.textContent = `:root { ${ov.join(' ')} }`
+    doc.head.appendChild(s)
+  }
 
-  clonedDoc.querySelectorAll('.bg-clip-text, .text-transparent').forEach((el) => {
+  // 4c. Hide toolbar
+  doc.querySelectorAll('[data-pdf-hide]').forEach((el) => { el.style.display = 'none' })
+
+  // 4d. Fix gradient clip-text
+  doc.querySelectorAll('.bg-clip-text, .text-transparent').forEach((el) => {
     el.style.backgroundImage      = 'none'
     el.style.webkitBackgroundClip = 'unset'
     el.style.backgroundClip       = 'unset'
-    el.style.webkitTextFillColor  = '#4338ca'
-    el.style.color                = '#4338ca'
+    el.style.webkitTextFillColor  = '#1e1b4b'
+    el.style.color                = '#1e1b4b'
   })
 
-  const root = clonedDoc.body.firstElementChild
+  // 4e. THE KEY PRINT STYLESHEET
+  // Converts dark theme to print-ready. Fixes list alignment. Prevents diagram cut.
+  const print = doc.createElement('style')
+  print.id = '__pdf_print__'
+  print.textContent = `
+
+    /* ═══════════════════════════════════════════════════
+       GLOBAL BACKGROUND & ROOT
+    ═══════════════════════════════════════════════════ */
+    *, *::before, *::after {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       TEXT COLORS — convert all gray-* to readable dark
+    ═══════════════════════════════════════════════════ */
+
+    /* h1/h2/h3 dark theme → readable dark */
+    h1, h2, h3, h4, h5, h6 {
+      color: #1e1b4b !important;
+    }
+
+    /* Tailwind text-gray-* classes used in FinalResult */
+    .text-gray-100, .text-gray-200, .text-gray-300 {
+      color: #1f2937 !important;
+    }
+    .text-gray-400, .text-gray-500 {
+      color: #374151 !important;
+    }
+    .text-gray-600, .text-gray-700 {
+      color: #4b5563 !important;
+    }
+
+    /* Accent colors — darken for white bg readability */
+    .text-indigo-300, .text-indigo-400 { color: #4338ca !important; }
+    .text-purple-300, .text-purple-400 { color: #7c3aed !important; }
+    .text-cyan-300,   .text-cyan-400   { color: #0e7490 !important; }
+    .text-green-300,  .text-green-400  { color: #15803d !important; }
+    .text-rose-300,   .text-rose-400   { color: #be123c !important; }
+    .text-amber-300,  .text-amber-400  { color: #b45309 !important; }
+    .text-white { color: #111827 !important; }
+
+    /* marker colors */
+    .marker\\:text-indigo-400::marker { color: #4338ca !important; }
+    .marker\\:text-indigo-500::marker { color: #4338ca !important; }
+
+    /* ═══════════════════════════════════════════════════
+       DARK BACKGROUNDS → WHITE
+    ═══════════════════════════════════════════════════ */
+    [class*="bg-white/"], [class*="bg-black/"],
+    [class*="from-black"], [class*="from-[#"],
+    [class*="via-[#"], [class*="to-[#"] {
+      background: #ffffff !important;
+      background-image: none !important;
+    }
+
+    /* Specific section cards */
+    .bg-white\\/3, .bg-white\\/5, .bg-white\\/8 {
+      background: #f9fafb !important;
+    }
+    .bg-indigo-500\\/10, .bg-indigo-500\\/12 {
+      background: #eef2ff !important;
+    }
+    .bg-purple-500\\/10, .bg-purple-500\\/12 {
+      background: #faf5ff !important;
+    }
+    .bg-cyan-500\\/10, .bg-cyan-500\\/12 {
+      background: #ecfeff !important;
+    }
+    .bg-rose-500\\/10, .bg-rose-500\\/12 {
+      background: #fff1f2 !important;
+    }
+    .bg-green-500\\/10, .bg-green-500\\/12 {
+      background: #f0fdf4 !important;
+    }
+
+    /* Dark borders → light */
+    [class*="border-white/"] { border-color: #e5e7eb !important; }
+    [class*="border-indigo-500/"] { border-color: #c7d2fe !important; }
+    [class*="border-purple-500/"] { border-color: #e9d5ff !important; }
+    [class*="border-cyan-500/"]   { border-color: #a5f3fc !important; }
+    [class*="border-rose-500/"]   { border-color: #fecdd3 !important; }
+
+    /* ═══════════════════════════════════════════════════
+       NUMBERED & BULLETED LIST ALIGNMENT FIX
+       The misalignment happens because Tailwind uses
+       ml-6 (margin-left) instead of padding-left.
+       html2canvas renders margin-left differently than
+       padding-left for list markers. Fix: use padding.
+    ═══════════════════════════════════════════════════ */
+    ol, ul {
+      margin-left:  0       !important;
+      padding-left: 1.5rem  !important;
+      list-style-position: outside !important;
+    }
+    ol { list-style-type: decimal !important; }
+    ul { list-style-type: disc    !important; }
+    li {
+      padding-left:  0.1rem !important;
+      margin-bottom: 0.3rem !important;
+      display:       list-item !important;
+      color: #374151 !important;
+    }
+    ol li { color: #374151 !important; }
+    li::marker { color: #4338ca !important; }
+
+    /* ml-6 override — the specific Tailwind class used in FinalResult */
+    .ml-6 { margin-left: 0 !important; padding-left: 1.5rem !important; }
+
+    /* ═══════════════════════════════════════════════════
+       DIAGRAM & CHART — prevent cutting at page breaks
+    ═══════════════════════════════════════════════════ */
+
+    /* Mermaid diagram container */
+    #mermaid-container,
+    [id="mermaid-container"] {
+      page-break-inside: avoid !important;
+      break-inside:      avoid !important;
+      overflow:          visible !important;
+    }
+    /* Mermaid SVG — fill container width */
+    #mermaid-container svg,
+    [id="mermaid-container"] svg {
+      width:      100%  !important;
+      max-width:  100%  !important;
+      height:     auto  !important;
+      overflow:   visible !important;
+    }
+    /* Chart wrapper */
+    .recharts-wrapper,
+    [class*="recharts-wrapper"] {
+      page-break-inside: avoid !important;
+      break-inside:      avoid !important;
+    }
+    /* Section containers keep together */
+    section {
+      page-break-inside: avoid !important;
+      break-inside:      avoid !important;
+    }
+    /* The white card that wraps diagram/chart in Notes/History */
+    .rounded-2xl {
+      page-break-inside: avoid !important;
+      break-inside:      avoid !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       SECTION HEADER BARS
+    ═══════════════════════════════════════════════════ */
+    .from-indigo-500\\/12 { background: #eef2ff !important; }
+    .from-purple-500\\/12 { background: #faf5ff !important; }
+    .from-cyan-500\\/12   { background: #ecfeff !important; }
+    .from-rose-500\\/12   { background: #fff1f2 !important; }
+    .from-green-500\\/12  { background: #f0fdf4 !important; }
+
+    /* ═══════════════════════════════════════════════════
+       CODE BLOCKS
+    ═══════════════════════════════════════════════════ */
+    code {
+      background: #f3f4f6 !important;
+      color:      #4338ca !important;
+      padding:    2px 5px !important;
+      border-radius: 4px !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       SMALL COLOUR DOTS (question section bullets)
+    ═══════════════════════════════════════════════════ */
+    .bg-indigo-400, .bg-indigo-500 { background-color: #4338ca !important; }
+    .bg-purple-400, .bg-purple-500 { background-color: #7c3aed !important; }
+    .bg-cyan-400,   .bg-cyan-500   { background-color: #0e7490 !important; }
+  `
+  doc.head.appendChild(print)
+
+  // 4f. Lock root width for consistent A4 scaling
+  const root = doc.body.firstElementChild
   if (root) {
     root.style.width    = captureWidth + 'px'
     root.style.minWidth = captureWidth + 'px'
     root.style.maxWidth = captureWidth + 'px'
+    root.style.background = '#ffffff'
+    root.style.color      = '#111827'
   }
 }
 
-// ─── Fix SVG dimensions ───────────────────────────────────────────────────────
+// ─── SVG dimensions ───────────────────────────────────────────────────────────
 function fixSvgDimensions(container) {
-  const svgs    = container.querySelectorAll('svg')
-  const restore = []
+  const svgs = container.querySelectorAll('svg')
+  const res  = []
   svgs.forEach((svg) => {
     const rect = svg.getBoundingClientRect()
-    const ow   = svg.getAttribute('width')
-    const oh   = svg.getAttribute('height')
+    const ow = svg.getAttribute('width'), oh = svg.getAttribute('height')
     if (rect.width > 0 && rect.height > 0) {
       svg.setAttribute('width',  String(rect.width))
       svg.setAttribute('height', String(rect.height))
     }
-    restore.push(() => {
+    res.push(() => {
       if (ow !== null) svg.setAttribute('width',  ow); else svg.removeAttribute('width')
       if (oh !== null) svg.setAttribute('height', oh); else svg.removeAttribute('height')
     })
   })
-  return () => restore.forEach((fn) => fn())
+  return () => res.forEach((fn) => fn())
 }
 
 // ─── Smart page break ─────────────────────────────────────────────────────────
@@ -175,14 +355,14 @@ function findSafeBreak(canvas, targetY, searchPx = 60) {
   const top  = Math.max(0, targetY - searchPx)
   const len  = Math.min(canvas.height, targetY + searchPx) - top
   if (len <= 0) return targetY
-  const data  = ctx.getImageData(0, top, W, len).data
+  const data = ctx.getImageData(0, top, W, len).data
   let bestRow = targetY, bestScore = -1
   const step  = Math.max(1, Math.floor(W / 300))
   for (let row = 0; row < len; row++) {
     let white = 0, total = 0
     for (let x = 0; x < W; x += step) {
       const i = (row * W + x) * 4
-      if ((data[i] + data[i + 1] + data[i + 2]) / 3 > 240) white++
+      if ((data[i] + data[i+1] + data[i+2]) / 3 > 240) white++
       total++
     }
     const score = white / total
@@ -192,25 +372,20 @@ function findSafeBreak(canvas, targetY, searchPx = 60) {
 }
 
 function cropCanvas(src, startY, endY) {
-  const h   = endY - startY
-  const out = document.createElement('canvas')
-  out.width  = src.width
-  out.height = h
-  out.getContext('2d').drawImage(src, 0, startY, src.width, h, 0, 0, src.width, h)
-  return out
+  const h = endY - startY
+  const c = document.createElement('canvas')
+  c.width = src.width; c.height = h
+  c.getContext('2d').drawImage(src, 0, startY, src.width, h, 0, 0, src.width, h)
+  return c
 }
 
 function injectHeader(container, topic) {
-  const el  = document.createElement('div')
-  el.id     = '__pdf_hdr__'
+  const el = document.createElement('div')
+  el.id = '__pdf_hdr__'
   el.style.cssText = `
     background: linear-gradient(135deg, #0f0f1a 0%, #1e1b4b 100%);
-    padding: 20px 28px 18px;
-    margin-bottom: 28px;
-    border-radius: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    padding: 20px 28px 18px; margin-bottom: 28px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: space-between;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   `
   el.innerHTML = `
@@ -221,10 +396,9 @@ function injectHeader(container, topic) {
     <div style="text-align:right">
       ${topic ? `<div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:3px">${topic}</div>` : ''}
       <div style="font-size:11px;color:#94a3b8">
-        ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+        ${new Date().toLocaleDateString('en-IN', { day:'numeric', month:'long', year:'numeric' })}
       </div>
-    </div>
-  `
+    </div>`
   container.insertBefore(el, container.firstChild)
   return () => el.remove()
 }
@@ -232,8 +406,7 @@ function injectHeader(container, topic) {
 function addFooter(pdf, n, total) {
   pdf.setFillColor(255, 255, 255)
   pdf.rect(0, A4_H_MM - 11, A4_W_MM, 11, 'F')
-  pdf.setDrawColor(99, 102, 241)
-  pdf.setLineWidth(0.4)
+  pdf.setDrawColor(99, 102, 241); pdf.setLineWidth(0.4)
   pdf.line(10, A4_H_MM - 9, A4_W_MM - 10, A4_H_MM - 9)
   pdf.setFontSize(7.5)
   pdf.setTextColor(150, 150, 150)
@@ -246,14 +419,11 @@ function addFooter(pdf, n, total) {
 // MAIN EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
 export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
-  const [h2cMod, jsPDFMod] = await Promise.all([
-    import('html2canvas'),
-    import('jspdf'),
-  ])
-  const html2canvas = h2cMod.default
-  const { jsPDF }   = jsPDFMod
+  const [h2c, jpdf] = await Promise.all([import('html2canvas'), import('jspdf')])
+  const html2canvas  = h2c.default
+  const { jsPDF }    = jpdf
 
-  const origStyles = {
+  const orig = {
     background: element.style.background,
     padding:    element.style.padding,
     width:      element.style.width,
@@ -269,47 +439,41 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   element.style.maxWidth   = CAPTURE_WIDTH + 'px'
   element.style.boxSizing  = 'border-box'
 
-  const removeHeader        = injectHeader(element, topic)
-  const restoreSvgs         = fixSvgDimensions(element)
-
-  // Apply all three layers of protection before html2canvas runs
-  const restoreComputedStyle = patchGetComputedStyle()  // ← intercepts getComputedStyle()
-  const restoreLiveStyles    = patchLiveStyles()         // ← patches <style> tags
+  const removeHeader  = injectHeader(element, topic)
+  const restoreSvgs   = fixSvgDimensions(element)
+  const restoreVars   = injectCssVariableOverrides()
+  const restoreGCS    = patchGetComputedStyle()
+  const restoreStyles = patchLiveStyles()
 
   await new Promise((r) => setTimeout(r, 400))
 
-  let fullCanvas
+  let canvas
   try {
-    fullCanvas = await html2canvas(element, {
+    canvas = await html2canvas(element, {
       scale:           SCALE,
       useCORS:         true,
       allowTaint:      true,
       backgroundColor: '#ffffff',
       logging:         false,
       windowWidth:     CAPTURE_WIDTH + 48,
-      x:               0,
-      y:               0,
-      width:           element.scrollWidth,
-      height:          element.scrollHeight,
-      onclone:         (clonedDoc) => patchClone(clonedDoc, CAPTURE_WIDTH),
+      x: 0, y: 0,
+      width:  element.scrollWidth,
+      height: element.scrollHeight,
+      onclone: (d) => patchClone(d, CAPTURE_WIDTH),
     })
   } finally {
-    // Always restore — even if html2canvas throws
-    removeHeader()
-    restoreSvgs()
-    restoreComputedStyle()   // ← restore original getComputedStyle
-    restoreLiveStyles()      // ← restore original <style> content
-    Object.assign(element.style, origStyles)
+    removeHeader(); restoreSvgs(); restoreVars(); restoreGCS(); restoreStyles()
+    Object.assign(element.style, orig)
   }
 
-  const pageHeightPx = Math.round((A4_H_MM / A4_W_MM) * fullCanvas.width)
+  const pageH  = Math.round((A4_H_MM / A4_W_MM) * canvas.width)
   const pages  = []
   let   startY = 0
-  while (startY < fullCanvas.height) {
-    let endY = Math.min(startY + pageHeightPx, fullCanvas.height)
-    if (endY < fullCanvas.height) {
-      endY = findSafeBreak(fullCanvas, endY, 80)
-      if (endY <= startY) endY = Math.min(startY + pageHeightPx, fullCanvas.height)
+  while (startY < canvas.height) {
+    let endY = Math.min(startY + pageH, canvas.height)
+    if (endY < canvas.height) {
+      endY = findSafeBreak(canvas, endY, 80)
+      if (endY <= startY) endY = Math.min(startY + pageH, canvas.height)
     }
     pages.push({ startY, endY })
     startY = endY
@@ -318,10 +482,10 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   const pdf = new jsPDF('p', 'mm', 'a4')
   pages.forEach(({ startY, endY }, i) => {
     if (i > 0) pdf.addPage()
-    const strip         = cropCanvas(fullCanvas, startY, endY)
-    const stripData     = strip.toDataURL('image/png', 1.0)
-    const stripHeightMM = (strip.height * A4_W_MM) / fullCanvas.width
-    pdf.addImage(stripData, 'PNG', 0, 0, A4_W_MM, stripHeightMM, '', 'FAST')
+    const strip  = cropCanvas(canvas, startY, endY)
+    const data   = strip.toDataURL('image/png', 1.0)
+    const hMM    = (strip.height * A4_W_MM) / canvas.width
+    pdf.addImage(data, 'PNG', 0, 0, A4_W_MM, hMM, '', 'FAST')
     addFooter(pdf, i + 1, pages.length)
   })
 
