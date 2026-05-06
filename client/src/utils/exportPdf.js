@@ -1,12 +1,11 @@
 /**
  * exportPdf.js — html2canvas + jsPDF
  *
- * Fixes in this version:
- *   1. Converts BOTH oklch() AND oklab() → rgb()
- *      Tailwind v4 uses oklch mostly, but some versions emit oklab.
- *   2. Forces 960px capture width so mobile export = desktop quality
- *   3. Smart page breaks (scan whitest pixel row near boundary)
- *   4. Hides data-pdf-hide elements (buttons/toolbar) from capture
+ * ROOT CAUSE OF oklab ERROR:
+ * html2canvas crashes at parseTree() reading getComputedStyle() from the
+ * LIVE DOM before onclone() is ever called. Patching only the cloned doc
+ * is too late. This file patches ALL <style> tags in the live document
+ * HEAD before html2canvas runs, then restores them after.
  */
 
 const A4_W_MM       = 210
@@ -14,10 +13,7 @@ const A4_H_MM       = 297
 const CAPTURE_WIDTH = 960
 const SCALE         = 2
 
-// ─── Shared OKLab → linear sRGB → gamma sRGB converter ───────────────────────
-// Both oklch and oklab share the same Lab→RGB matrix.
-// oklch feeds polar(C,H) → Cartesian(a,b) first.
-// oklab feeds a,b directly.
+// ─── OKLab → linear sRGB → gamma sRGB ────────────────────────────────────────
 function oklabToRgb(L, a, b) {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b
@@ -26,26 +22,16 @@ function oklabToRgb(L, a, b) {
   const rL =  4.0767416621 * ll - 3.3077115913 * mm + 0.2309699292 * ss
   const gL = -1.2684380046 * ll + 2.6097574011 * mm - 0.3413193965 * ss
   const bL = -0.0041960863 * ll - 0.7034186147 * mm + 1.7076147010 * ss
-  const gamma = (x) => Math.round(
-    Math.max(0, Math.min(1,
-      x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055
-    )) * 255
-  )
-  return `rgb(${gamma(rL)},${gamma(gL)},${gamma(bL)})`
+  const g  = (x) => Math.round(Math.max(0, Math.min(1,
+    x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)) * 255)
+  return `rgb(${g(rL)},${g(gL)},${g(bL)})`
 }
 
-// ─── oklch(L C H [/ alpha]) → rgb / rgba ─────────────────────────────────────
-function oklchToRgb(l, c, h) {
-  const L   = isNaN(+l) ? 0 : +l
-  const C   = isNaN(+c) ? 0 : +c
-  const H   = isNaN(+h) ? 0 : +h
+// oklch uses polar coords — convert to Lab then delegate
+function oklchToRgb(L, C, H) {
   const rad = (H * Math.PI) / 180
   return oklabToRgb(L, C * Math.cos(rad), C * Math.sin(rad))
 }
-
-// ─── Regex patterns ───────────────────────────────────────────────────────────
-const OKLCH_RE = /oklch\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
-const OKLAB_RE = /oklab\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
 
 function parseVal(v) {
   if (!v || v === 'none') return 0
@@ -60,21 +46,41 @@ function withAlpha(rgbStr, alpha) {
   return m ? `rgba(${m[0]},${m[1]},${m[2]},${a})` : rgbStr
 }
 
+const OKLCH_RE = /oklch\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
+const OKLAB_RE = /oklab\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
+
 function replaceModernColors(str) {
-  // Replace oklch first (more common in Tailwind v4)
   let out = str.replace(OKLCH_RE, (_, l, c, h, alpha) =>
     withAlpha(oklchToRgb(parseVal(l), parseVal(c), parseVal(h)), alpha)
   )
-  // Then replace oklab
   out = out.replace(OKLAB_RE, (_, l, a, b, alpha) =>
     withAlpha(oklabToRgb(parseVal(l), parseVal(a), parseVal(b)), alpha)
   )
   return out
 }
 
-// ─── Patch cloned document ────────────────────────────────────────────────────
+// ─── KEY FIX: Patch live <style> tags BEFORE html2canvas runs ─────────────────
+// html2canvas calls getComputedStyle() on the live DOM during parseTree() —
+// this happens BEFORE onclone(). So we must replace unsupported color functions
+// in the real document's stylesheets first, then restore them afterwards.
+function patchLiveStyles() {
+  const patches = []
+
+  document.querySelectorAll('style').forEach((el) => {
+    const original = el.textContent
+    if (original.includes('oklch') || original.includes('oklab')) {
+      el.textContent = replaceModernColors(original)
+      patches.push({ el, original })
+    }
+  })
+
+  // Return restore function
+  return () => patches.forEach(({ el, original }) => { el.textContent = original })
+}
+
+// ─── Patch cloned document (secondary pass — catches any missed inline styles) ──
 function patchClone(clonedDoc, captureWidth) {
-  // 1. Fix unsupported color functions in <style> tags
+  // 1. Fix remaining oklch/oklab in <style> tags of the clone
   clonedDoc.querySelectorAll('style').forEach((el) => {
     const t = el.textContent
     if (t.includes('oklch') || t.includes('oklab'))
@@ -88,7 +94,7 @@ function patchClone(clonedDoc, captureWidth) {
       el.setAttribute('style', replaceModernColors(s))
   })
 
-  // 3. Hide toolbar / button elements (data-pdf-hide)
+  // 3. Hide toolbar / button elements
   clonedDoc.querySelectorAll('[data-pdf-hide]').forEach((el) => {
     el.style.display = 'none'
   })
@@ -163,7 +169,6 @@ function cropCanvas(src, startY, endY) {
   return out
 }
 
-// ─── Branded header injected into capture ────────────────────────────────────
 function injectHeader(container, topic) {
   const el  = document.createElement('div')
   el.id     = '__pdf_hdr__'
@@ -193,7 +198,6 @@ function injectHeader(container, topic) {
   return () => el.remove()
 }
 
-// ─── Footer per page ─────────────────────────────────────────────────────────
 function addFooter(pdf, n, total) {
   pdf.setFillColor(255, 255, 255)
   pdf.rect(0, A4_H_MM - 11, A4_W_MM, 11, 'F')
@@ -208,7 +212,7 @@ function addFooter(pdf, n, total) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN EXPORT — works identically on mobile, tablet, desktop
+// MAIN EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
 export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   const [h2cMod, jsPDFMod] = await Promise.all([
@@ -218,7 +222,7 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   const html2canvas = h2cMod.default
   const { jsPDF }   = jsPDFMod
 
-  // Snapshot original styles for clean restore
+  // Snapshot original inline styles
   const origStyles = {
     background: element.style.background,
     padding:    element.style.padding,
@@ -228,7 +232,7 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
     boxSizing:  element.style.boxSizing,
   }
 
-  // Force desktop-width render so mobile viewport doesn't stretch the canvas
+  // Force desktop-width render (prevents mobile scaling)
   element.style.background = '#ffffff'
   element.style.padding    = '24px'
   element.style.width      = CAPTURE_WIDTH + 'px'
@@ -236,8 +240,11 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   element.style.maxWidth   = CAPTURE_WIDTH + 'px'
   element.style.boxSizing  = 'border-box'
 
-  const removeHeader = injectHeader(element, topic)
-  const restoreSvgs  = fixSvgDimensions(element)
+  const removeHeader    = injectHeader(element, topic)
+  const restoreSvgs     = fixSvgDimensions(element)
+
+  // ── CRITICAL: patch live <style> tags NOW, before html2canvas parseTree ──
+  const restoreLiveStyles = patchLiveStyles()
 
   // Let Recharts/Mermaid finish painting
   await new Promise((r) => setTimeout(r, 400))
@@ -258,15 +265,17 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
       onclone:         (clonedDoc) => patchClone(clonedDoc, CAPTURE_WIDTH),
     })
   } finally {
+    // Always restore — even if capture throws
     removeHeader()
     restoreSvgs()
+    restoreLiveStyles()               // ← restore original Tailwind styles
     Object.assign(element.style, origStyles)
   }
 
+  // Build pages with smart breaks
   const pageHeightPx = Math.round((A4_H_MM / A4_W_MM) * fullCanvas.width)
   const pages  = []
   let   startY = 0
-
   while (startY < fullCanvas.height) {
     let endY = Math.min(startY + pageHeightPx, fullCanvas.height)
     if (endY < fullCanvas.height) {
@@ -278,7 +287,6 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   }
 
   const pdf = new jsPDF('p', 'mm', 'a4')
-
   pages.forEach(({ startY, endY }, i) => {
     if (i > 0) pdf.addPage()
     const strip         = cropCanvas(fullCanvas, startY, endY)
