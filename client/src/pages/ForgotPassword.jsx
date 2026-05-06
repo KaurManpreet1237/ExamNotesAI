@@ -437,8 +437,8 @@ function ForgotPassword() {
                       right={
                         <button type="button"
                           onClick={() => setShowNew((p) => !p)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                          {showNew ? <span className="text-sm">🙈</span> : <span className="text-sm">👁</span>}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors">
+                          {showNew ? <AiOutlineEyeInvisible size={17} /> : <AiOutlineEye size={17} />}
                         </button>
                       }
                     />
@@ -455,8 +455,8 @@ function ForgotPassword() {
                       right={
                         <button type="button"
                           onClick={() => setShowConfirm((p) => !p)}
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
-                          {showConfirm ? <span className="text-sm">🙈</span> : <span className="text-sm">👁</span>}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors">
+                          {showConfirm ? <AiOutlineEyeInvisible size={17} /> : <AiOutlineEye size={17} />}
                         </button>
                       }
                     />

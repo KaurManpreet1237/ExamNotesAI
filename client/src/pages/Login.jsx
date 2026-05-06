@@ -159,13 +159,7 @@ function Login() {
 
             {/* Password */}
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium text-gray-400">Password</label>
-                <Link to="/forgot-password"
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
-                  Forgot password?
-                </Link>
-              </div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Password</label>
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
@@ -187,6 +181,13 @@ function Login() {
                 >
                   {showPassword ? <AiOutlineEyeInvisible size={17} /> : <AiOutlineEye size={17} />}
                 </button>
+              </div>
+              {/* Forgot password — below the input field */}
+              <div className="flex justify-end mt-2">
+                <Link to="/forgot-password"
+                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                  Forgot password?
+                </Link>
               </div>
             </div>
 
