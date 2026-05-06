@@ -7,17 +7,17 @@ import { useSelector } from 'react-redux'
 import FinalResult from '../components/FinalResult'
 import Navbar from '../components/Navbar'
 
-// ─── Background ───────────────────────────────────────────────────────────────
+// ─── Dark background ──────────────────────────────────────────────────────────
 const PageBg = () => (
   <div className="fixed inset-0 pointer-events-none -z-10">
-    <div className="absolute inset-0 bg-[#f5f5f7]" />
-    <div className="absolute inset-0 opacity-50" style={{
-      backgroundImage: `linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px)`,
-      backgroundSize: "48px 48px"
+    <div className="absolute inset-0 bg-[#0a0a0b]" />
+    <div className="absolute inset-0" style={{
+      backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`,
+      backgroundSize: "56px 56px"
     }} />
-    <div className="absolute top-0 left-1/3 w-96 h-96 bg-purple-400/5 rounded-full blur-3xl" />
-    <div className="absolute bottom-0 right-1/3 w-80 h-80 bg-indigo-400/4 rounded-full blur-3xl" />
+    <div className="absolute top-0 left-1/3 w-[500px] h-[500px] bg-purple-600/7 rounded-full blur-3xl" />
+    <div className="absolute bottom-0 right-1/3 w-96 h-96 bg-indigo-600/6 rounded-full blur-3xl" />
   </div>
 )
 
@@ -60,11 +60,10 @@ function History() {
       <PageBg />
       <Navbar />
 
-      {/* ── Mobile overlay drawer ─────────────────────────────────────────── */}
+      {/* ── Mobile overlay drawer ── */}
       <AnimatePresence>
         {isSidebarOpen && (
           <>
-            {/* Full-screen backdrop — blocks ALL content behind it */}
             <motion.div
               key="backdrop"
               initial={{ opacity: 0 }}
@@ -74,8 +73,6 @@ function History() {
               onClick={() => setIsSidebarOpen(false)}
               className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 lg:hidden"
             />
-
-            {/* Drawer: full width on mobile, fixed width on tablet */}
             <motion.div
               key="drawer"
               initial={{ x: "-100%" }}
@@ -87,12 +84,9 @@ function History() {
                 bg-gradient-to-br from-[#0d0d14] via-[#111118] to-[#0d0d14]
                 border-r border-white/10
                 shadow-[4px_0_40px_rgba(0,0,0,0.7)]
-                flex flex-col
-                lg:hidden"
+                flex flex-col lg:hidden"
             >
-              {/* Drawer header */}
-              <div className="flex items-center justify-between px-5 pt-5 pb-4
-                border-b border-white/8">
+              <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-white/8">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">📚</span>
                   <span className="text-white font-semibold text-sm">Your Notes</span>
@@ -112,12 +106,9 @@ function History() {
                   ✕
                 </button>
               </div>
-
-              {/* Scrollable note list */}
               <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
-                {/* New Notes button */}
                 <motion.button
-                  whileHover={{ scale: 1.02 }}
+                  whileHover={{ y: -1 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={() => navigate("/notes")}
                   className="w-full mb-3 flex items-center justify-center gap-2
@@ -128,7 +119,6 @@ function History() {
                 >
                   + New Notes
                 </motion.button>
-
                 {topics.length === 0 ? (
                   <div className="text-center py-10">
                     <p className="text-3xl mb-2">📭</p>
@@ -136,12 +126,7 @@ function History() {
                   </div>
                 ) : (
                   topics.map((t, i) => (
-                    <NoteCard
-                      key={i}
-                      t={t}
-                      active={activeNoteId === t._id}
-                      onClick={() => openNotes(t._id)}
-                    />
+                    <NoteCard key={i} t={t} active={activeNoteId === t._id} onClick={() => openNotes(t._id)} />
                   ))
                 )}
               </div>
@@ -150,19 +135,19 @@ function History() {
         )}
       </AnimatePresence>
 
-      {/* ── Page body ─────────────────────────────────────────────────────── */}
+      {/* ── Page body ── */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
         {/* Mobile top bar */}
         <div className="flex items-center justify-between mb-5 lg:hidden">
           <div>
-            <h1 className="text-xl font-extrabold text-gray-900">My Notes</h1>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <h1 className="text-xl font-extrabold text-white">My Notes</h1>
+            <p className="text-xs text-gray-500 mt-0.5">
               {topics.length} note{topics.length !== 1 ? "s" : ""}
             </p>
           </div>
           <motion.button
-            whileHover={{ scale: 1.04 }}
+            whileHover={{ y: -1 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => setIsSidebarOpen(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl
@@ -176,18 +161,16 @@ function History() {
         {/* Desktop two-column layout */}
         <div className="flex gap-6">
 
-          {/* Desktop sidebar (static, never in AnimatePresence) */}
+          {/* Desktop sidebar */}
           <aside className="hidden lg:flex flex-col
-            w-64 xl:w-72 shrink-0
-            rounded-2xl
+            w-64 xl:w-72 shrink-0 rounded-2xl
             bg-gradient-to-br from-black/90 via-black/85 to-black/90
             backdrop-blur-xl border border-white/10
             shadow-[0_20px_60px_rgba(0,0,0,0.45)]
-            p-5
-            h-[calc(100vh-110px)] sticky top-4 overflow-y-auto"
+            p-5 h-[calc(100vh-110px)] sticky top-4 overflow-y-auto"
           >
             <motion.button
-              whileHover={{ scale: 1.02 }}
+              whileHover={{ y: -1 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => navigate("/notes")}
               className="w-full mb-4 flex items-center justify-center gap-2
@@ -198,9 +181,7 @@ function History() {
             >
               + New Notes
             </motion.button>
-
             <div className="h-px bg-white/10 mb-4" />
-
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-bold text-white">Your Notes</h2>
               {topics.length > 0 && (
@@ -210,27 +191,22 @@ function History() {
                 </span>
               )}
             </div>
-
             {topics.length === 0 ? (
               <p className="text-xs text-gray-500 px-1">No notes yet.</p>
             ) : (
               <ul className="space-y-2">
                 {topics.map((t, i) => (
-                  <NoteCard
-                    key={i}
-                    t={t}
-                    active={activeNoteId === t._id}
-                    onClick={() => openNotes(t._id)}
-                  />
+                  <NoteCard key={i} t={t} active={activeNoteId === t._id} onClick={() => openNotes(t._id)} />
                 ))}
               </ul>
             )}
           </aside>
 
-          {/* Main content */}
-          <main className="flex-1 min-w-0 rounded-2xl bg-white
-            border border-gray-100
-            shadow-[0_8px_30px_rgba(0,0,0,0.07)]
+          {/* Main content — dark card */}
+          <main className="flex-1 min-w-0 rounded-2xl
+            bg-gradient-to-br from-[#111118] via-[#0f0f16] to-[#111118]
+            border border-white/10
+            shadow-[0_20px_60px_rgba(0,0,0,0.5)]
             p-4 sm:p-6 min-h-[75vh]"
           >
             {loading && (
@@ -242,7 +218,7 @@ function History() {
                 >
                   📖
                 </motion.div>
-                <p className="text-gray-400 text-sm">Loading notes…</p>
+                <p className="text-gray-500 text-sm">Loading notes…</p>
               </div>
             )}
 
@@ -252,25 +228,22 @@ function History() {
                   animate={{ y: [0, -6, 0] }}
                   transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
                   className="w-14 h-14 rounded-2xl
-                    bg-gradient-to-br from-indigo-50 to-purple-50
-                    border border-indigo-100
-                    flex items-center justify-center text-2xl mb-4 shadow-sm"
+                    bg-gradient-to-br from-indigo-500/20 to-purple-500/10
+                    border border-indigo-500/20
+                    flex items-center justify-center text-2xl mb-4"
                 >
                   📚
                 </motion.div>
-                <p className="text-base font-semibold text-gray-600 mb-1">
-                  Select a note
-                </p>
-                <p className="text-sm text-gray-400 max-w-xs">
+                <p className="text-base font-semibold text-white mb-1">Select a note</p>
+                <p className="text-sm text-gray-500 max-w-xs">
                   Choose a topic from the sidebar to view your notes.
                 </p>
                 <motion.button
-                  whileHover={{ scale: 1.03 }}
+                  whileHover={{ y: -1 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={() => setIsSidebarOpen(true)}
                   className="lg:hidden mt-5 px-5 py-2.5 rounded-xl text-sm font-medium
-                    bg-gradient-to-r from-indigo-500 to-purple-600
-                    text-white shadow-sm"
+                    bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm"
                 >
                   Browse Notes
                 </motion.button>
@@ -287,7 +260,7 @@ function History() {
   )
 }
 
-// ─── Shared note card ─────────────────────────────────────────────────────────
+// ─── Note card ────────────────────────────────────────────────────────────────
 function NoteCard({ t, active, onClick }) {
   return (
     <motion.li
@@ -303,14 +276,12 @@ function NoteCard({ t, active, onClick }) {
       <p className="text-sm font-semibold text-white truncate">{t.topic}</p>
       <div className="flex flex-wrap gap-1.5 mt-1.5">
         {t.classLevel && (
-          <span className="text-[10px] px-2 py-0.5 rounded-full
-            bg-indigo-500/20 text-indigo-300">
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">
             {t.classLevel}
           </span>
         )}
         {t.examType && (
-          <span className="text-[10px] px-2 py-0.5 rounded-full
-            bg-purple-500/20 text-purple-300">
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
             {t.examType}
           </span>
         )}
