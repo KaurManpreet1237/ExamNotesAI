@@ -1,92 +1,89 @@
 /**
- * exportPdf.js — Frontend PDF export (html2canvas + jsPDF)
+ * exportPdf.js — html2canvas + jsPDF
  *
- * FIXES in this version:
- *   1. Buttons hidden before capture via data-pdf-hide attribute
- *   2. Gradient clip-text fixed → solid colour in clone
- *   3. Smart page breaks — scans pixel rows to avoid cutting mid-sentence
- *   4. oklch() → rgb() conversion for Tailwind v4
+ * KEY FIX: Force capture width to 960px so text renders at normal
+ * density. Without this, narrow mobile viewports produce giant text
+ * because the narrow canvas gets stretched to fill A4 width.
  */
 
-const A4_W_MM = 210
-const A4_H_MM = 297
-const SCALE   = 2       // retina quality
+const A4_W_MM       = 210
+const A4_H_MM       = 297
+const CAPTURE_WIDTH = 960    // ← forces desktop-width capture regardless of viewport
+const SCALE         = 2      // retina quality
 
 // ─── oklch → rgb ──────────────────────────────────────────────────────────────
+// Tailwind v4 uses oklch() everywhere; html2canvas can't parse it.
 function oklchToRgb(l, c, h) {
   const L = isNaN(+l) ? 0 : +l
   const C = isNaN(+c) ? 0 : +c
   const H = isNaN(+h) ? 0 : +h
-  const r  = (H * Math.PI) / 180
-  const a  = C * Math.cos(r)
-  const b  = C * Math.sin(r)
-  const l_ = L + 0.3963377774 * a + 0.2158037573 * b
-  const m_ = L - 0.1055613458 * a - 0.0638541728 * b
-  const s_ = L - 0.0894841775 * a - 1.2914855480 * b
-  const ll = l_ ** 3, mm = m_ ** 3, ss = s_ ** 3
-  const rL =  4.0767416621 * ll - 3.3077115913 * mm + 0.2309699292 * ss
-  const gL = -1.2684380046 * ll + 2.6097574011 * mm - 0.3413193965 * ss
-  const bL = -0.0041960863 * ll - 0.7034186147 * mm + 1.7076147010 * ss
-  const g  = (x) => Math.round(Math.max(0, Math.min(1, x <= 0.0031308
-    ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)) * 255)
-  return `rgb(${g(rL)}, ${g(gL)}, ${g(bL)})`
+  const rad = (H * Math.PI) / 180
+  const a   = C * Math.cos(rad)
+  const b   = C * Math.sin(rad)
+  const l_  = L + 0.3963377774 * a + 0.2158037573 * b
+  const m_  = L - 0.1055613458 * a - 0.0638541728 * b
+  const s_  = L - 0.0894841775 * a - 1.2914855480 * b
+  const ll  = l_ ** 3, mm = m_ ** 3, ss = s_ ** 3
+  const rL  =  4.0767416621 * ll - 3.3077115913 * mm + 0.2309699292 * ss
+  const gL  = -1.2684380046 * ll + 2.6097574011 * mm - 0.3413193965 * ss
+  const bL  = -0.0041960863 * ll - 0.7034186147 * mm + 1.7076147010 * ss
+  const g   = (x) => Math.round(Math.max(0, Math.min(1,
+    x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1/2.4) - 0.055)) * 255)
+  return `rgb(${g(rL)},${g(gL)},${g(bL)})`
 }
 
 const OKLCH_RE = /oklch\(\s*([^\s)]+)\s+([^\s)]+)\s+([^\s)/]+)(?:\s*\/\s*([^\s)]+))?\s*\)/gi
 
 function replaceOklch(str) {
   return str.replace(OKLCH_RE, (_, l, c, h, alpha) => {
-    const lv = l.endsWith?.('%') ? parseFloat(l) / 100 : l === 'none' ? 0 : parseFloat(l)
+    const lv = typeof l === 'string' && l.endsWith('%') ? parseFloat(l)/100 : l === 'none' ? 0 : parseFloat(l)
     const cv = c === 'none' ? 0 : parseFloat(c)
     const hv = h === 'none' ? 0 : parseFloat(h)
     const rgb = oklchToRgb(lv, cv, hv)
     if (alpha && alpha !== '1' && alpha !== '100%') {
-      const a = alpha.endsWith?.('%') ? parseFloat(alpha) / 100 : parseFloat(alpha)
+      const a = alpha.endsWith?.('%') ? parseFloat(alpha)/100 : parseFloat(alpha)
       const m = rgb.match(/\d+/g)
-      return m ? `rgba(${m[0]}, ${m[1]}, ${m[2]}, ${a})` : rgb
+      return m ? `rgba(${m[0]},${m[1]},${m[2]},${a})` : rgb
     }
     return rgb
   })
 }
 
 // ─── Patch cloned document ────────────────────────────────────────────────────
-function patchClone(clonedDoc) {
-  // 1. Fix oklch in all <style> tags
+function patchClone(clonedDoc, captureWidth) {
+  // 1. Fix oklch in <style> tags
   clonedDoc.querySelectorAll('style').forEach((el) => {
-    if (el.textContent.includes('oklch')) {
+    if (el.textContent.includes('oklch'))
       el.textContent = replaceOklch(el.textContent)
-    }
   })
 
   // 2. Fix inline oklch
   clonedDoc.querySelectorAll('[style]').forEach((el) => {
     const s = el.getAttribute('style')
-    if (s.includes('oklch')) el.setAttribute('style', replaceOklch(s))
+    if (s && s.includes('oklch')) el.setAttribute('style', replaceOklch(s))
   })
 
-  // 3. Hide elements marked data-pdf-hide (buttons, toolbars etc.)
+  // 3. Hide buttons / toolbar elements
   clonedDoc.querySelectorAll('[data-pdf-hide]').forEach((el) => {
     el.style.display = 'none'
   })
 
-  // 4. Fix gradient clip-text — html2canvas renders it as a solid block.
-  //    Replace with a plain solid indigo colour.
-  clonedDoc.querySelectorAll('.bg-clip-text').forEach((el) => {
-    el.style.backgroundImage  = 'none'
-    el.style.webkitBackgroundClip = 'unset'
-    el.style.backgroundClip   = 'unset'
-    el.style.webkitTextFillColor = '#4338ca'
-    el.style.color            = '#4338ca'
-    el.style.opacity          = '1'
+  // 4. Fix gradient clip-text → plain colour
+  clonedDoc.querySelectorAll('.bg-clip-text, .text-transparent').forEach((el) => {
+    el.style.backgroundImage       = 'none'
+    el.style.webkitBackgroundClip  = 'unset'
+    el.style.backgroundClip        = 'unset'
+    el.style.webkitTextFillColor   = '#4338ca'
+    el.style.color                 = '#4338ca'
   })
 
-  // 5. Also patch any element that has text-transparent (Tailwind)
-  //    which makes text invisible in html2canvas
-  clonedDoc.querySelectorAll('.text-transparent').forEach((el) => {
-    el.style.color = '#4338ca'
-    el.style.webkitTextFillColor = '#4338ca'
-    el.style.backgroundImage = 'none'
-  })
+  // 5. Force the root element to CAPTURE_WIDTH so nothing is narrow-viewport scaled
+  const root = clonedDoc.body.firstElementChild
+  if (root) {
+    root.style.width    = captureWidth + 'px'
+    root.style.minWidth = captureWidth + 'px'
+    root.style.maxWidth = captureWidth + 'px'
+  }
 }
 
 // ─── Fix SVG dimensions ───────────────────────────────────────────────────────
@@ -109,79 +106,46 @@ function fixSvgDimensions(container) {
   return () => restore.forEach((fn) => fn())
 }
 
-// ─── Smart page breaks ────────────────────────────────────────────────────────
-// Scans pixel rows near the expected page boundary and finds the row
-// with the most white pixels — i.e. a gap between content blocks.
-// This prevents sentences from being cut mid-line.
-
-function findSafeBreak(canvas, targetY, searchPx = 80) {
-  const ctx = canvas.getContext('2d')
-  const W   = canvas.width
-  const top = Math.max(0, targetY - searchPx)
-  const len = Math.min(canvas.height, targetY + searchPx) - top
-
+// ─── Smart page break ─────────────────────────────────────────────────────────
+// Scans pixel rows near the expected cut point and finds the whitest row
+// so sentences are never sliced mid-line.
+function findSafeBreak(canvas, targetY, searchPx = 60) {
+  const ctx  = canvas.getContext('2d')
+  const W    = canvas.width
+  const top  = Math.max(0, targetY - searchPx)
+  const len  = Math.min(canvas.height, targetY + searchPx) - top
   if (len <= 0) return targetY
 
   const data = ctx.getImageData(0, top, W, len).data
-  let bestRow = targetY
-  let bestScore = -1
-  const step = Math.max(1, Math.floor(W / 300))   // sample ~300 pixels per row
+  let bestRow = targetY, bestScore = -1
+  const step = Math.max(1, Math.floor(W / 300))
 
   for (let row = 0; row < len; row++) {
-    let white = 0
-    let total = 0
+    let white = 0, total = 0
     for (let x = 0; x < W; x += step) {
       const i = (row * W + x) * 4
-      const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3
-      if (brightness > 238) white++
+      if ((data[i] + data[i+1] + data[i+2]) / 3 > 240) white++
       total++
     }
     const score = white / total
-    if (score > bestScore) {
-      bestScore = score
-      bestRow   = top + row
-    }
+    if (score > bestScore) { bestScore = score; bestRow = top + row }
   }
   return bestRow
 }
 
-// Slice the full canvas into page-sized strips at safe break points
-function buildPages(canvas, pageHeightPx) {
-  const pages  = []
-  let startY   = 0
-  const total  = canvas.height
-
-  while (startY < total) {
-    let endY = Math.min(startY + pageHeightPx, total)
-
-    // Only search for a better break if this isn't the last page
-    if (endY < total) {
-      endY = findSafeBreak(canvas, endY, 80)
-      // Safety: don't go backwards past startY
-      if (endY <= startY) endY = Math.min(startY + pageHeightPx, total)
-    }
-
-    pages.push({ startY, endY })
-    startY = endY
-  }
-  return pages
-}
-
-// Crop one strip from the full canvas into a new canvas
-function cropCanvas(source, startY, endY) {
+function cropCanvas(src, startY, endY) {
   const h   = endY - startY
   const out = document.createElement('canvas')
-  out.width  = source.width
+  out.width  = src.width
   out.height = h
-  out.getContext('2d').drawImage(source, 0, startY, source.width, h, 0, 0, source.width, h)
+  out.getContext('2d').drawImage(src, 0, startY, src.width, h, 0, 0, src.width, h)
   return out
 }
 
-// ─── Inject print header ──────────────────────────────────────────────────────
+// ─── Inject branded header ────────────────────────────────────────────────────
 function injectHeader(container, topic) {
   const el = document.createElement('div')
   el.id = '__pdf_hdr__'
-  // Use only rgb/hex — no oklch — so html2canvas renders correctly
   el.style.cssText = `
     background: linear-gradient(135deg, #0f0f1a 0%, #1e1b4b 100%);
     padding: 20px 28px 18px;
@@ -194,13 +158,13 @@ function injectHeader(container, topic) {
   `
   el.innerHTML = `
     <div>
-      <div style="font-size:20px;font-weight:800;color:#ffffff;margin-bottom:3px">ExamCraft</div>
+      <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:3px">ExamCraft</div>
       <div style="font-size:11px;color:#818cf8">AI-powered exam-oriented notes &amp; revision</div>
     </div>
     <div style="text-align:right">
-      ${topic ? `<div style="font-size:13px;font-weight:600;color:#ffffff;margin-bottom:3px">${topic}</div>` : ''}
+      ${topic ? `<div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:3px">${topic}</div>` : ''}
       <div style="font-size:11px;color:#94a3b8">
-        ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+        ${new Date().toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}
       </div>
     </div>
   `
@@ -208,26 +172,23 @@ function injectHeader(container, topic) {
   return () => el.remove()
 }
 
-// ─── Add footer on each jsPDF page ───────────────────────────────────────────
-function addFooter(pdf, pageNum, total) {
-  // White strip to mask overflowing content
+// ─── Footer on every jsPDF page ───────────────────────────────────────────────
+function addFooter(pdf, n, total) {
   pdf.setFillColor(255, 255, 255)
   pdf.rect(0, A4_H_MM - 11, A4_W_MM, 11, 'F')
-  // Accent line
   pdf.setDrawColor(99, 102, 241)
   pdf.setLineWidth(0.4)
   pdf.line(10, A4_H_MM - 9, A4_W_MM - 10, A4_H_MM - 9)
-  // Left text
   pdf.setFontSize(7.5)
   pdf.setTextColor(150, 150, 150)
-  pdf.text('ExamCraft · Generated ' +
-    new Date().toLocaleDateString('en-IN'), 10, A4_H_MM - 4)
-  // Right page number
+  pdf.text('ExamCraft · Generated ' + new Date().toLocaleDateString('en-IN'), 10, A4_H_MM - 4)
   pdf.setTextColor(99, 102, 241)
-  pdf.text('Page ' + pageNum + ' / ' + total, A4_W_MM - 26, A4_H_MM - 4)
+  pdf.text('Page ' + n + ' / ' + total, A4_W_MM - 26, A4_H_MM - 4)
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
 export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   const [h2cMod, jsPDFMod] = await Promise.all([
     import('html2canvas'),
@@ -236,18 +197,30 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
   const html2canvas = h2cMod.default
   const { jsPDF }   = jsPDFMod
 
-  // Temporarily style the container for capture
-  const origBg  = element.style.background
-  const origPad = element.style.padding
-  const origW   = element.style.width
+  // Save original inline styles so we can restore them
+  const origStyles = {
+    background: element.style.background,
+    padding:    element.style.padding,
+    width:      element.style.width,
+    minWidth:   element.style.minWidth,
+    maxWidth:   element.style.maxWidth,
+    boxSizing:  element.style.boxSizing,
+  }
+
+  // ── Force desktop width before capture ───────────────────────────────────
+  // This is the critical fix: without this, a 390px mobile viewport produces
+  // a narrow canvas that gets stretched to A4, making text appear huge.
   element.style.background = '#ffffff'
-  element.style.padding    = '20px'
-  element.style.width      = element.offsetWidth + 'px'   // lock width so layout doesn't shift
+  element.style.padding    = '24px'
+  element.style.width      = CAPTURE_WIDTH + 'px'
+  element.style.minWidth   = CAPTURE_WIDTH + 'px'
+  element.style.maxWidth   = CAPTURE_WIDTH + 'px'
+  element.style.boxSizing  = 'border-box'
 
   const removeHeader = injectHeader(element, topic)
   const restoreSvgs  = fixSvgDimensions(element)
 
-  // Let Recharts / Mermaid finish any deferred renders
+  // Wait for React / Recharts / Mermaid to finish painting
   await new Promise((r) => setTimeout(r, 400))
 
   let fullCanvas
@@ -258,37 +231,44 @@ export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
       allowTaint:      true,
       backgroundColor: '#ffffff',
       logging:         false,
+      // Match the forced width so html2canvas sees the full layout
+      windowWidth:  CAPTURE_WIDTH + 48,  // +48 for the padding we added
       x:      0,
       y:      0,
       width:  element.scrollWidth,
       height: element.scrollHeight,
-      onclone: (clonedDoc) => {
-        patchClone(clonedDoc)
-      },
+      onclone: (clonedDoc) => patchClone(clonedDoc, CAPTURE_WIDTH),
     })
   } finally {
-    // Always restore — even if capture throws
+    // Always restore — even if capture fails
     removeHeader()
     restoreSvgs()
-    element.style.background = origBg
-    element.style.padding    = origPad
-    element.style.width      = origW
+    Object.assign(element.style, origStyles)
   }
 
-  // A4 page height in canvas pixels (at SCALE×)
+  // ── Page-break calculation ────────────────────────────────────────────────
   const pageHeightPx = Math.round((A4_H_MM / A4_W_MM) * fullCanvas.width)
 
-  // Split the full canvas into smart-break pages
-  const pages = buildPages(fullCanvas, pageHeightPx)
-  const pdf   = new jsPDF('p', 'mm', 'a4')
+  // Build smart-break pages
+  const pages  = []
+  let startY   = 0
+  while (startY < fullCanvas.height) {
+    let endY = Math.min(startY + pageHeightPx, fullCanvas.height)
+    if (endY < fullCanvas.height) {
+      endY = findSafeBreak(fullCanvas, endY, 80)
+      if (endY <= startY) endY = Math.min(startY + pageHeightPx, fullCanvas.height)
+    }
+    pages.push({ startY, endY })
+    startY = endY
+  }
+
+  const pdf = new jsPDF('p', 'mm', 'a4')
 
   pages.forEach(({ startY, endY }, i) => {
     if (i > 0) pdf.addPage()
-
-    const strip       = cropCanvas(fullCanvas, startY, endY)
-    const stripData   = strip.toDataURL('image/png', 1.0)
+    const strip        = cropCanvas(fullCanvas, startY, endY)
+    const stripData    = strip.toDataURL('image/png', 1.0)
     const stripHeightMM = (strip.height * A4_W_MM) / fullCanvas.width
-
     pdf.addImage(stripData, 'PNG', 0, 0, A4_W_MM, stripHeightMM, '', 'FAST')
     addFooter(pdf, i + 1, pages.length)
   })

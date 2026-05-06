@@ -1,141 +1,154 @@
 import React, { useState } from 'react'
-import { motion } from "motion/react"
-import { useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence } from "motion/react"
 import { useSelector } from 'react-redux'
 import TopicForm from '../components/TopicForm'
 import Sidebar from '../components/Sidebar'
 import FinalResult from '../components/FinalResult'
+import Navbar from '../components/Navbar'
+
+// ─── Background ───────────────────────────────────────────────────────────────
+const PageBg = () => (
+  <div className="fixed inset-0 pointer-events-none -z-10">
+    <div className="absolute inset-0 bg-[#f5f5f7]" />
+    <div className="absolute inset-0 opacity-50" style={{
+      backgroundImage: `linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px)`,
+      backgroundSize: "48px 48px"
+    }} />
+    <div className="absolute top-0 right-1/3 w-96 h-96 bg-indigo-400/5 rounded-full blur-3xl" />
+    <div className="absolute bottom-0 left-1/3 w-80 h-80 bg-purple-400/4 rounded-full blur-3xl" />
+  </div>
+)
+
 function Notes() {
-  const navigate = useNavigate()
+  // ── All state / logic untouched ───────────────────────────────────────────
   const { userData } = useSelector((state) => state.user)
-  const credits = userData.credits
-  const [loading,setLoading]= useState(false)
-  const [result , setResult] = useState(null)
-  const [error,setError] = useState("")
+  const [loading,  setLoading]  = useState(false)
+  const [result,   setResult]   = useState(null)
+  const [error,    setError]    = useState("")
 
   return (
-    <div className='min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 px-6 py-8'>
-      <motion.header
-        initial={{ opacity: 0, y: -15 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+    <div className="min-h-screen">
+      <PageBg />
 
-        className=" mb-10
-            rounded-2xl
-            bg-black/80 backdrop-blur-xl
-            border border-white/10
-            px-8 py-6
-            shadow-[0_20px_45px_rgba(0,0,0,0.6)] items-start
-            flex md:items-center justify-between gap-4 flex-col md:flex-row"
-      >
-        <div onClick={() => navigate("/")} className='cursor-pointer'><h1 className='text-2xl font-bold
-            bg-linear-to-r from-white via-gray-300 to-white
-            bg-clip-text text-transparent'>ExamCraft</h1>
-          <p className='text-sm text-gray-300 mt-1'>AI-powered exam-oriented notes & revision</p></div>
+      {/* Shared premium navbar from Home page */}
+      <Navbar />
 
-        <div className='flex items-center gap-4 flex-wrap'>
-          <button className='flex items-center gap-2 
-    px-4 py-2 rounded-full
-    bg-white/10
-    border border-white/20
-    text-white text-sm' onClick={() => navigate("/pricing")}>
-            <span className='text-xl'>💠</span>
-            <span>{credits}</span>
-            <motion.span whileHover={{ scale: 1.2 }}
-              whileTap={{ scale: 0.97 }}
-              className='ml-2 h-5 w-5 flex items-center justify-center
-                        rounded-full bg-white  text-xs font-bold'
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-7">
+
+        {/* ── Section label + title ── */}
+        <motion.div
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase
+            tracking-widest text-indigo-500 bg-indigo-50 border border-indigo-100
+            rounded-full px-3 py-1 mb-3">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+            AI Workspace
+          </span>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 leading-tight">
+            Generate Notes
+          </h1>
+          <p className="text-gray-500 text-sm mt-1.5">
+            Enter any topic and let AI build exam-ready notes, diagrams and charts in seconds.
+          </p>
+        </motion.div>
+
+        {/* ── TopicForm ── */}
+        <motion.div
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.06 }}
+        >
+          <TopicForm
+            loading={loading}
+            setResult={setResult}
+            setLoading={setLoading}
+            setError={setError}
+          />
+        </motion.div>
+
+        {/* ── Error banner ── */}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="flex items-center gap-2.5 text-red-600 text-sm
+                bg-red-50 border border-red-200 rounded-xl px-4 py-3"
             >
-              ➕
+              <span className="text-base shrink-0">⚠️</span>
+              {error}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            </motion.span>
-
-
-          </button>
-          <button onClick={()=>navigate("/history")} className='px-4 py-3 rounded-full
-      text-sm font-medium
-      bg-white/10
-      border border-white/20
-      text-white
-      hover:bg-white/20
-      transition
-      flex items-center gap-2'>
-        📚 Your Notes
-
-
-          </button>
-        </div>
-
-
-      </motion.header>
-
-
-      <motion.div 
-          className="mb-12">
-        <TopicForm loading={loading} setResult={setResult} setLoading={setLoading} setError={setError}/>
-      </motion.div>
-
-
-      {loading && (
+        {/* ── Empty state ── */}
+        {!result && !loading && (
           <motion.div
-            animate={{ opacity: [0.4, 1, 0.4] }}
-            transition={{ repeat: Infinity, duration: 1.2 }}
-            className="text-center text-black font-medium mb-6"
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.45, delay: 0.1 }}
+            className="rounded-2xl border-2 border-dashed border-gray-200/80
+              bg-white/60 backdrop-blur-sm
+              flex flex-col items-center justify-center
+              py-20 px-6 text-center"
           >
-            Generating exam-focused notes…
+            <motion.div
+              animate={{ y: [0, -7, 0] }}
+              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+              className="w-16 h-16 rounded-2xl
+                bg-gradient-to-br from-indigo-50 to-purple-50
+                border border-indigo-100
+                flex items-center justify-center text-3xl mb-5 shadow-sm"
+            >
+              📘
+            </motion.div>
+            <h3 className="text-base font-semibold text-gray-700 mb-1.5">
+              Generated notes will appear here
+            </h3>
+            <p className="text-sm text-gray-400 max-w-sm leading-relaxed">
+              Fill in the form above, choose your options, and click{" "}
+              <span className="text-indigo-500 font-medium">Generate Notes</span>.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2 mt-6">
+              {["📋 Exam Notes", "📊 Diagrams", "📈 Charts", "⬇️ PDF Export"].map((f) => (
+                <span key={f}
+                  className="text-xs px-3 py-1.5 rounded-full bg-white
+                    border border-gray-200 text-gray-500 shadow-sm">
+                  {f}
+                </span>
+              ))}
+            </div>
           </motion.div>
         )}
 
-        {error && (
-          <div className="mb-6 text-center text-red-600 font-medium">
-            {error}
-          </div>
+        {/* ── Result panel ── */}
+        {result && (
+          <motion.div
+            initial={{ opacity: 0, y: 28 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45 }}
+            className="flex flex-col lg:grid lg:grid-cols-4 gap-6"
+          >
+            {/* Sticky sidebar on desktop */}
+            <div className="lg:col-span-1 lg:sticky lg:top-4 self-start">
+              <Sidebar result={result} />
+            </div>
+
+            {/* Main notes card */}
+            <div className="lg:col-span-3 rounded-2xl bg-white
+              border border-gray-100
+              shadow-[0_8px_30px_rgba(0,0,0,0.07)]
+              p-4 sm:p-6">
+              <FinalResult result={result} />
+            </div>
+          </motion.div>
         )}
-
-    {!result && <motion.div whileHover={{ scale: 1.02 }}
-            className="
-              h-64
-              rounded-2xl
-              flex flex-col items-center justify-center
-              bg-white/60 backdrop-blur-lg
-              border border-dashed border-gray-300
-              text-gray-500
-              shadow-inner
-            ">
-               <span className="text-4xl mb-3">📘</span>
-            <p className="text-sm">
-              Generated notes will appear here
-            </p>
-
-     </motion.div>}
-
-
-    {result && <motion.div
-    initial={{ opacity: 0, y: 30 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.4 }}
-     className='flex flex-col
-      lg:grid lg:grid-cols-4
-      gap-6'>
-
-        <div className='lg:col-span-1'>
-          <Sidebar result={result}/>
-
-
-        </div>
-
-        <div className='lg:col-span-3
-        rounded-2xl
-        bg-white
-        shadow-[0_15px_40px_rgba(0,0,0,0.15)]
-        p-6'>
-          <FinalResult result={result}/>
-
-        </div>
-
-
-    </motion.div>
-}
+      </div>
     </div>
   )
 }
