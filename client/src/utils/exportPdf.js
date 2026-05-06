@@ -1,59 +1,25 @@
 /**
- * exportPdf.js — Professional PDF Export Engine
- * ════════════════════════════════════════════════════════════════════════════
+ * exportPdf.js — html2canvas + jsPDF
  *
- * Architecture (modular, single-file for build simplicity):
- *
- *   ┌─ COLOR LAYER     oklch/oklab → rgb (4-layer interception for html2canvas)
- *   ├─ STYLE LAYER     Print stylesheet, dark→light theme conversion
- *   ├─ RENDER WAIT     Deterministic completion of fonts/images/SVG/Recharts
- *   ├─ CAPTURE LAYER   html2canvas with stable dimensions + clone patches
- *   ├─ PAGINATION      Atomic-block-aware page splitter
- *   └─ BUILDER         jsPDF assembly with header/footer
- *
- * Key engineering decisions:
- *
- *   ► Atomic blocks (diagrams, charts, sections) are detected from DOM
- *     and translated to canvas Y-coordinates. Page breaks are *forced*
- *     to land BEFORE atomic blocks, never inside them.
- *
- *   ► Render wait does not rely on a single setTimeout. It awaits:
- *       1. document.fonts.ready
- *       2. all <img>.complete
- *       3. all <svg> with non-zero bounding rect (mermaid done)
- *       4. all .recharts-wrapper containing an <svg> (recharts done)
- *       5. two requestAnimationFrame ticks (paint settle)
- *
- *   ► Blank-page detection samples FIVE evenly-distributed full-width
- *     stripes across the candidate page — never just a corner.
- *
- *   ► Footer occupies a reserved 14mm zone; content image is sized so
- *     it can never overflow into that zone.
- *
- *   ► Public API preserved: exportToPdf(element, filename, topic)
- * ════════════════════════════════════════════════════════════════════════════
+ * Professional PDF export with all layout fixes:
+ *   1. oklch/oklab → rgb() (4-layer interception)
+ *   2. Faded text: dark theme grays invisible on white PDF
+ *   3. Numbered/bulleted list alignment
+ *   4. Diagram/chart cut at page breaks
+ *   5. Footer collision — content reserved above footer zone
+ *   6. Blank page prevention
+ *   7. Diagram oversizing — max-height constrained
+ *   8. Professional typography rhythm
  */
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 0. CONSTANTS
- * ──────────────────────────────────────────────────────────────────────────── */
+const A4_W_MM       = 210
+const A4_H_MM       = 297
+const FOOTER_H_MM   = 14          // footer zone reserved at bottom
+const CONTENT_H_MM  = A4_H_MM - FOOTER_H_MM  // 283mm usable per page
+const CAPTURE_WIDTH = 960
+const SCALE         = 2
 
-const A4_W_MM        = 210
-const A4_H_MM        = 297
-const FOOTER_H_MM    = 14                        // reserved at page bottom
-const CONTENT_H_MM   = A4_H_MM - FOOTER_H_MM     // 283mm usable per page
-const CAPTURE_WIDTH  = 960                       // CSS pixels we lock the export at
-const SCALE          = 2                         // html2canvas oversampling
-const HEADING_GUARD_PX     = 90                  // orphan-heading guard zone (canvas px)
-const ATOMIC_BREAK_GAP     = 8                   // canvas px gap before forced break
-const MIN_FILL_RATIO       = 0.30                // forced-early break must keep ≥30% page filled
-const RENDER_WAIT_TIMEOUT  = 4000                // ms cap on async render wait
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 1. COLOR CONVERSION  (oklch / oklab → sRGB)
- *    Required because html2canvas v1 cannot parse modern color() functions.
- * ──────────────────────────────────────────────────────────────────────────── */
-
+// ─── Color converters ─────────────────────────────────────────────────────────
 function oklabToRgb(L, a, b) {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b
@@ -62,22 +28,19 @@ function oklabToRgb(L, a, b) {
   const rL =  4.0767416621 * ll - 3.3077115913 * mm + 0.2309699292 * ss
   const gL = -1.2684380046 * ll + 2.6097574011 * mm - 0.3413193965 * ss
   const bL = -0.0041960863 * ll - 0.7034186147 * mm + 1.7076147010 * ss
-  const g = (x) => Math.round(Math.max(0, Math.min(1,
-    x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)) * 255)
+  const g  = (x) => Math.round(Math.max(0, Math.min(1,
+    x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1/2.4) - 0.055)) * 255)
   return `rgb(${g(rL)},${g(gL)},${g(bL)})`
 }
-
 function oklchToRgb(L, C, H) {
   const r = (H * Math.PI) / 180
   return oklabToRgb(L, C * Math.cos(r), C * Math.sin(r))
 }
-
 function parseVal(v) {
   if (!v || v === 'none') return 0
   if (typeof v === 'string' && v.endsWith('%')) return parseFloat(v) / 100
   return parseFloat(v)
 }
-
 function withAlpha(rgb, alpha) {
   if (!alpha || alpha === '1' || alpha === '100%') return rgb
   const a = parseVal(alpha)
@@ -98,10 +61,7 @@ function replaceModernColors(str) {
   return out
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 2. LIVE STYLE PATCHES (applied to actual document, reverted after capture)
- * ──────────────────────────────────────────────────────────────────────────── */
-
+// ─── Layer 1: :root CSS variable override ────────────────────────────────────
 function injectCssVariableOverrides() {
   const rs = window.getComputedStyle(document.documentElement)
   const ov = []
@@ -120,6 +80,7 @@ function injectCssVariableOverrides() {
   return () => s.remove()
 }
 
+// ─── Layer 2: getComputedStyle proxy ─────────────────────────────────────────
 function patchGetComputedStyle() {
   const orig = window.getComputedStyle
   window.getComputedStyle = function (...a) {
@@ -136,6 +97,7 @@ function patchGetComputedStyle() {
   return () => { window.getComputedStyle = orig }
 }
 
+// ─── Layer 3: live <style> tag patching ──────────────────────────────────────
 function patchLiveStyles() {
   const patches = []
   document.querySelectorAll('style').forEach((el) => {
@@ -148,238 +110,27 @@ function patchLiveStyles() {
   return () => patches.forEach(({ el, orig }) => { el.textContent = orig })
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 3. PRINT STYLESHEET (injected into the html2canvas clone)
- *    Converts dark theme to light, fixes typography, marks atomic blocks.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-const PRINT_STYLESHEET = `
-
-  *, *::before, *::after {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    box-sizing: border-box !important;
-  }
-
-  body {
-    background: #ffffff !important;
-    color: #111827 !important;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif !important;
-    font-size: 14px !important;
-    line-height: 1.6 !important;
-  }
-
-  /* ── Typography hierarchy ─────────────────────────────────────── */
-  h1 {
-    color: #1e1b4b !important;
-    font-size: 22px !important;
-    font-weight: 800 !important;
-    margin: 28px 0 14px !important;
-    padding-bottom: 8px !important;
-    border-bottom: 2px solid #e0e7ff !important;
-    line-height: 1.3 !important;
-  }
-  h2 {
-    color: #1e1b4b !important;
-    font-size: 17px !important;
-    font-weight: 700 !important;
-    margin: 22px 0 10px !important;
-    line-height: 1.35 !important;
-  }
-  h3 {
-    color: #374151 !important;
-    font-size: 15px !important;
-    font-weight: 600 !important;
-    margin: 16px 0 8px !important;
-    line-height: 1.4 !important;
-  }
-  h4, h5, h6 {
-    color: #374151 !important;
-    font-size: 14px !important;
-    font-weight: 600 !important;
-    margin: 12px 0 6px !important;
-  }
-  h1, h2, h3, h4 {
-    page-break-after: avoid !important;
-    break-after: avoid !important;
-  }
-
-  /* ── Paragraphs ────────────────────────────────────────────────── */
-  p {
-    color: #374151 !important;
-    margin: 0 0 10px !important;
-    line-height: 1.65 !important;
-  }
-  strong, b { color: #111827 !important; font-weight: 700 !important; }
-
-  /* ── Dark theme grays → readable on white ─────────────────────── */
-  .text-gray-100, .text-gray-200, .text-gray-300 { color: #1f2937 !important; }
-  .text-gray-400, .text-gray-500                 { color: #374151 !important; }
-  .text-gray-600, .text-gray-700                 { color: #4b5563 !important; }
-  .text-indigo-300, .text-indigo-400 { color: #4338ca !important; }
-  .text-purple-300, .text-purple-400 { color: #7c3aed !important; }
-  .text-cyan-300,   .text-cyan-400   { color: #0e7490 !important; }
-  .text-green-300,  .text-green-400  { color: #15803d !important; }
-  .text-rose-300,   .text-rose-400   { color: #be123c !important; }
-  .text-amber-300,  .text-amber-400  { color: #b45309 !important; }
-  .text-white                        { color: #111827 !important; }
-
-  .marker\\:text-indigo-400::marker { color: #4338ca !important; }
-  .marker\\:text-indigo-500::marker { color: #4338ca !important; }
-
-  /* ── Dark backgrounds → light ─────────────────────────────────── */
-  [class*="bg-white/"], [class*="bg-black/"],
-  [class*="from-black"], [class*="from-[#"],
-  [class*="via-[#"], [class*="to-[#"] {
-    background: #ffffff !important;
-    background-image: none !important;
-  }
-  .bg-white\\/3, .bg-white\\/5, .bg-white\\/8     { background: #f9fafb !important; }
-  .bg-indigo-500\\/10, .bg-indigo-500\\/12        { background: #eef2ff !important; }
-  .bg-purple-500\\/10, .bg-purple-500\\/12        { background: #faf5ff !important; }
-  .bg-cyan-500\\/10,   .bg-cyan-500\\/12          { background: #ecfeff !important; }
-  .bg-rose-500\\/10,   .bg-rose-500\\/12          { background: #fff1f2 !important; }
-  .bg-green-500\\/10,  .bg-green-500\\/12         { background: #f0fdf4 !important; }
-  [class*="border-white/"]       { border-color: #e5e7eb !important; }
-  [class*="border-indigo-500/"]  { border-color: #c7d2fe !important; }
-  [class*="border-purple-500/"]  { border-color: #e9d5ff !important; }
-  [class*="border-cyan-500/"]    { border-color: #a5f3fc !important; }
-  [class*="border-rose-500/"]    { border-color: #fecdd3 !important; }
-  [class*="border-green-500/"]   { border-color: #bbf7d0 !important; }
-  .from-indigo-500\\/12 { background: #eef2ff !important; }
-  .from-purple-500\\/12 { background: #faf5ff !important; }
-  .from-cyan-500\\/12   { background: #ecfeff !important; }
-  .from-rose-500\\/12   { background: #fff1f2 !important; }
-  .from-green-500\\/12  { background: #f0fdf4 !important; }
-
-  /* ── Lists — professional alignment ───────────────────────────── */
-  ul, ol {
-    margin: 0 0 10px !important;
-    padding-left: 1.75rem !important;
-    list-style-position: outside !important;
-  }
-  ul { list-style-type: disc !important; }
-  ol { list-style-type: decimal !important; }
-  li {
-    display: list-item !important;
-    color: #374151 !important;
-    padding-left: 0.2rem !important;
-    margin-bottom: 4px !important;
-    line-height: 1.6 !important;
-  }
-  li::marker { color: #4338ca !important; font-size: 1em !important; }
-  li > ul, li > ol {
-    margin: 4px 0 !important;
-    padding-left: 1.25rem !important;
-  }
-  .ml-6 { margin-left: 0 !important; padding-left: 1.75rem !important; }
-  .space-y-1   > li + li,
-  .space-y-1\\.5 > li + li,
-  .space-y-2   > li + li { margin-top: 0 !important; }
-  .space-y-1   > li { margin-bottom: 4px !important; }
-  .space-y-1\\.5 > li { margin-bottom: 6px !important; }
-  .space-y-2   > li { margin-bottom: 8px !important; }
-
-  /* ── Sections & cards ─────────────────────────────────────────── */
-  section {
-    margin-bottom: 20px !important;
-  }
-  .rounded-2xl { border-radius: 12px !important; }
-  .mb-4 { margin-bottom: 12px !important; }
-
-  /* ── Atomic blocks — never split (CSS hint, JS enforces it) ───── */
-  [data-pdf-block="diagram"],
-  [data-pdf-block="chart"],
-  [data-pdf-block="atomic"],
-  #mermaid-container,
-  [id="mermaid-container"],
-  [data-pdf-chart],
-  .recharts-wrapper,
-  [class*="recharts-wrapper"] {
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-    overflow: visible !important;
-  }
-
-  /* Mermaid diagram sizing & containment */
-  #mermaid-container,
-  [id="mermaid-container"] {
-    padding: 20px !important;
-    background: #ffffff !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 12px !important;
-  }
-  #mermaid-container svg,
-  [id="mermaid-container"] svg {
-    width: 100% !important;
-    max-width: 100% !important;
-    height: auto !important;
-    max-height: 460px !important;
-    display: block !important;
-    margin: 0 auto !important;
-  }
-
-  /* Recharts container */
-  [data-pdf-chart] > div { overflow: visible !important; }
-
-  /* ── Code blocks ──────────────────────────────────────────────── */
-  code {
-    background: #f3f4f6 !important;
-    color: #4338ca !important;
-    padding: 2px 5px !important;
-    border-radius: 4px !important;
-    font-size: 12px !important;
-  }
-  pre {
-    background: #f8fafc !important;
-    border: 1px solid #e5e7eb !important;
-    border-radius: 8px !important;
-    padding: 12px 16px !important;
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
-  }
-
-  /* ── Color dots (question section bullets) ────────────────────── */
-  .bg-indigo-400, .bg-indigo-500 { background-color: #4338ca !important; }
-  .bg-purple-400, .bg-purple-500 { background-color: #7c3aed !important; }
-  .bg-cyan-400,   .bg-cyan-500   { background-color: #0e7490 !important; }
-
-  /* ── Spacing utilities ────────────────────────────────────────── */
-  .space-y-8 > * + * { margin-top: 18px !important; }
-  .space-y-6 > * + * { margin-top: 14px !important; }
-  .space-y-4 > * + * { margin-top: 10px !important; }
-  .p-5, .p-6, .sm\\:p-6 { padding: 16px !important; }
-`
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 4. CLONE PATCH (runs inside html2canvas onclone callback)
- * ──────────────────────────────────────────────────────────────────────────── */
-
+// ─── Layer 4: onclone — color + layout comprehensive fix ─────────────────────
 function patchClone(doc, captureWidth) {
-  // 4a. Replace oklch/oklab in <style> tags
+
+  // 4a. Fix oklch/oklab in cloned styles
   doc.querySelectorAll('style').forEach((el) => {
     const t = el.textContent
     if (t.includes('oklch') || t.includes('oklab')) el.textContent = replaceModernColors(t)
   })
-
-  // 4b. Replace oklch/oklab in inline style attributes
   doc.querySelectorAll('[style]').forEach((el) => {
     const s = el.getAttribute('style')
-    if (s && (s.includes('oklch') || s.includes('oklab'))) {
-      el.setAttribute('style', replaceModernColors(s))
-    }
+    if (s && (s.includes('oklch') || s.includes('oklab'))) el.setAttribute('style', replaceModernColors(s))
   })
 
-  // 4c. Forward :root variable overrides
+  // 4b. Inject :root variable overrides into clone
   const rs = window.getComputedStyle(document.documentElement)
   const ov = []
   for (let i = 0; i < rs.length; i++) {
     const p = rs[i]
     if (!p.startsWith('--')) continue
     const v = rs.getPropertyValue(p).trim()
-    if (v.includes('oklch') || v.includes('oklab')) {
-      ov.push(`${p}: ${replaceModernColors(v)};`)
-    }
+    if (v.includes('oklch') || v.includes('oklab')) ov.push(`${p}: ${replaceModernColors(v)};`)
   }
   if (ov.length) {
     const s = doc.createElement('style')
@@ -387,10 +138,10 @@ function patchClone(doc, captureWidth) {
     doc.head.appendChild(s)
   }
 
-  // 4d. Hide UI-only elements (e.g., toolbar)
+  // 4c. Hide toolbar
   doc.querySelectorAll('[data-pdf-hide]').forEach((el) => { el.style.display = 'none' })
 
-  // 4e. Fix gradient clip-text (renders blank in canvas)
+  // 4d. Fix gradient clip-text
   doc.querySelectorAll('.bg-clip-text, .text-transparent').forEach((el) => {
     el.style.backgroundImage      = 'none'
     el.style.webkitBackgroundClip = 'unset'
@@ -399,13 +150,302 @@ function patchClone(doc, captureWidth) {
     el.style.color                = '#1e1b4b'
   })
 
-  // 4f. Inject the print stylesheet
+  // 4e. THE KEY PRINT STYLESHEET
   const print = doc.createElement('style')
   print.id = '__pdf_print__'
-  print.textContent = PRINT_STYLESHEET
+  print.textContent = `
+
+    /* ═══════════════════════════════════════════════════
+       GLOBAL RESET FOR PRINT
+    ═══════════════════════════════════════════════════ */
+    *, *::before, *::after {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      box-sizing: border-box !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       BODY & ROOT BASELINE
+    ═══════════════════════════════════════════════════ */
+    body {
+      background: #ffffff !important;
+      color: #111827 !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif !important;
+      font-size: 14px !important;
+      line-height: 1.6 !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       TYPOGRAPHY HIERARCHY — Professional spacing system
+       H1 → H2 → H3 → body: consistent rhythm
+    ═══════════════════════════════════════════════════ */
+    h1 {
+      color: #1e1b4b !important;
+      font-size: 22px !important;
+      font-weight: 800 !important;
+      margin-top: 28px !important;
+      margin-bottom: 14px !important;
+      padding-bottom: 8px !important;
+      border-bottom: 2px solid #e0e7ff !important;
+      line-height: 1.3 !important;
+    }
+    h2 {
+      color: #1e1b4b !important;
+      font-size: 17px !important;
+      font-weight: 700 !important;
+      margin-top: 22px !important;
+      margin-bottom: 10px !important;
+      line-height: 1.35 !important;
+    }
+    h3 {
+      color: #374151 !important;
+      font-size: 15px !important;
+      font-weight: 600 !important;
+      margin-top: 16px !important;
+      margin-bottom: 8px !important;
+      line-height: 1.4 !important;
+    }
+    h4, h5, h6 {
+      color: #374151 !important;
+      font-size: 14px !important;
+      font-weight: 600 !important;
+      margin-top: 12px !important;
+      margin-bottom: 6px !important;
+    }
+
+    /* Prevent orphaned headings — keep heading with its first content */
+    h1, h2, h3, h4 {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       PARAGRAPH & TEXT
+    ═══════════════════════════════════════════════════ */
+    p {
+      color: #374151 !important;
+      margin-top: 0 !important;
+      margin-bottom: 10px !important;
+      line-height: 1.65 !important;
+    }
+    strong, b {
+      color: #111827 !important;
+      font-weight: 700 !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       TEXT COLORS — convert dark theme grays to readable
+    ═══════════════════════════════════════════════════ */
+    .text-gray-100, .text-gray-200, .text-gray-300 {
+      color: #1f2937 !important;
+    }
+    .text-gray-400, .text-gray-500 {
+      color: #374151 !important;
+    }
+    .text-gray-600, .text-gray-700 {
+      color: #4b5563 !important;
+    }
+    .text-indigo-300, .text-indigo-400 { color: #4338ca !important; }
+    .text-purple-300, .text-purple-400 { color: #7c3aed !important; }
+    .text-cyan-300,   .text-cyan-400   { color: #0e7490 !important; }
+    .text-green-300,  .text-green-400  { color: #15803d !important; }
+    .text-rose-300,   .text-rose-400   { color: #be123c !important; }
+    .text-amber-300,  .text-amber-400  { color: #b45309 !important; }
+    .text-white { color: #111827 !important; }
+
+    .marker\\:text-indigo-400::marker { color: #4338ca !important; }
+    .marker\\:text-indigo-500::marker { color: #4338ca !important; }
+
+    /* ═══════════════════════════════════════════════════
+       DARK BACKGROUNDS → LIGHT
+    ═══════════════════════════════════════════════════ */
+    [class*="bg-white/"], [class*="bg-black/"],
+    [class*="from-black"], [class*="from-[#"],
+    [class*="via-[#"], [class*="to-[#"] {
+      background: #ffffff !important;
+      background-image: none !important;
+    }
+    .bg-white\\/3, .bg-white\\/5, .bg-white\\/8 {
+      background: #f9fafb !important;
+    }
+    .bg-indigo-500\\/10, .bg-indigo-500\\/12 { background: #eef2ff !important; }
+    .bg-purple-500\\/10, .bg-purple-500\\/12 { background: #faf5ff !important; }
+    .bg-cyan-500\\/10,   .bg-cyan-500\\/12   { background: #ecfeff !important; }
+    .bg-rose-500\\/10,   .bg-rose-500\\/12   { background: #fff1f2 !important; }
+    .bg-green-500\\/10,  .bg-green-500\\/12  { background: #f0fdf4 !important; }
+
+    [class*="border-white/"] { border-color: #e5e7eb !important; }
+    [class*="border-indigo-500/"] { border-color: #c7d2fe !important; }
+    [class*="border-purple-500/"] { border-color: #e9d5ff !important; }
+    [class*="border-cyan-500/"]   { border-color: #a5f3fc !important; }
+    [class*="border-rose-500/"]   { border-color: #fecdd3 !important; }
+
+    /* ═══════════════════════════════════════════════════
+       BULLET & NUMBERED LIST — Professional alignment
+       Root cause: html2canvas renders margin-left
+       differently from padding-left for list markers.
+       Fix: force padding-left + outside positioning.
+    ═══════════════════════════════════════════════════ */
+    ul, ol {
+      margin: 0 !important;
+      margin-bottom: 10px !important;
+      padding-left: 1.75rem !important;
+      list-style-position: outside !important;
+    }
+    ul { list-style-type: disc !important; }
+    ol { list-style-type: decimal !important; }
+
+    li {
+      display: list-item !important;
+      color: #374151 !important;
+      padding-left: 0.2rem !important;
+      margin-bottom: 4px !important;
+      line-height: 1.6 !important;
+    }
+    ol li { color: #374151 !important; }
+    li::marker {
+      color: #4338ca !important;
+      font-size: 1em !important;
+    }
+
+    /* Nested lists — tighter indent for second level */
+    li > ul, li > ol {
+      margin-top: 4px !important;
+      margin-bottom: 4px !important;
+      padding-left: 1.25rem !important;
+    }
+
+    /* Tailwind ml-6 override: the most common list wrapper */
+    .ml-6 {
+      margin-left: 0 !important;
+      padding-left: 1.75rem !important;
+    }
+
+    /* space-y utilities on lists — normalize to margin-bottom */
+    .space-y-1   > li + li,
+    .space-y-1\\.5 > li + li,
+    .space-y-2   > li + li {
+      margin-top: 0 !important;
+    }
+    .space-y-1   > li { margin-bottom: 4px  !important; }
+    .space-y-1\\.5 > li { margin-bottom: 6px  !important; }
+    .space-y-2   > li { margin-bottom: 8px  !important; }
+
+    /* ═══════════════════════════════════════════════════
+       SECTION CARDS — consistent spacing
+    ═══════════════════════════════════════════════════ */
+    section {
+      margin-bottom: 20px !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    /* The rounded card wrapping notes/diagram/chart */
+    .rounded-2xl {
+      border-radius: 12px !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    /* Section header bars */
+    .from-indigo-500\\/12 { background: #eef2ff !important; }
+    .from-purple-500\\/12 { background: #faf5ff !important; }
+    .from-cyan-500\\/12   { background: #ecfeff !important; }
+    .from-rose-500\\/12   { background: #fff1f2 !important; }
+    .from-green-500\\/12  { background: #f0fdf4 !important; }
+
+    /* Section header bottom margin */
+    .mb-4 { margin-bottom: 12px !important; }
+
+    /* ═══════════════════════════════════════════════════
+       MERMAID DIAGRAM — prevent cut & size control
+       Max-height prevents oversized diagrams from
+       overflowing into footer or next page.
+    ═══════════════════════════════════════════════════ */
+    #mermaid-container,
+    [id="mermaid-container"] {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      overflow: visible !important;
+      padding: 20px !important;
+      background: #ffffff !important;
+      border: 1px solid #e5e7eb !important;
+      border-radius: 12px !important;
+    }
+
+    /* SVG: constrain height so diagram fits in one page safely */
+    #mermaid-container svg,
+    [id="mermaid-container"] svg {
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      max-height: 420px !important;
+      overflow: visible !important;
+      display: block !important;
+      margin: 0 auto !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       RECHARTS — prevent cut + stable sizing
+    ═══════════════════════════════════════════════════ */
+    .recharts-wrapper,
+    [class*="recharts-wrapper"],
+    [data-pdf-chart] {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      overflow: visible !important;
+    }
+
+    /* Chart outer container */
+    [data-pdf-chart] > div {
+      overflow: visible !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       CODE BLOCKS
+    ═══════════════════════════════════════════════════ */
+    code {
+      background: #f3f4f6 !important;
+      color: #4338ca !important;
+      padding: 2px 5px !important;
+      border-radius: 4px !important;
+      font-size: 12px !important;
+    }
+    pre {
+      background: #f8fafc !important;
+      border: 1px solid #e5e7eb !important;
+      border-radius: 8px !important;
+      padding: 12px 16px !important;
+      overflow: visible !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       COLOUR DOTS (question section bullets)
+    ═══════════════════════════════════════════════════ */
+    .bg-indigo-400, .bg-indigo-500 { background-color: #4338ca !important; }
+    .bg-purple-400, .bg-purple-500 { background-color: #7c3aed !important; }
+    .bg-cyan-400,   .bg-cyan-500   { background-color: #0e7490 !important; }
+
+    /* ═══════════════════════════════════════════════════
+       SPACING UTILITIES — tighten vertical rhythm
+    ═══════════════════════════════════════════════════ */
+    .space-y-8 > * + * { margin-top: 18px !important; }
+    .space-y-6 > * + * { margin-top: 14px !important; }
+    .space-y-4 > * + * { margin-top: 10px !important; }
+    .p-5, .p-6, .sm\\:p-6 { padding: 16px !important; }
+
+    /* ═══════════════════════════════════════════════════
+       STAR RATING ROWS in Sub Topics
+    ═══════════════════════════════════════════════════ */
+    .mb-4 > div:first-child {
+      margin-bottom: 6px !important;
+    }
+  `
   doc.head.appendChild(print)
 
-  // 4g. Lock root width — prevents responsive collapse during capture
+  // 4f. Lock root width for consistent A4 scaling
   const root = doc.body.firstElementChild
   if (root) {
     root.style.width    = captureWidth + 'px'
@@ -416,303 +456,76 @@ function patchClone(doc, captureWidth) {
   }
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 5. SVG DIMENSION FREEZE
- *    html2canvas sometimes treats width/height="100%" as 0 → invisible SVG.
- *    Convert to absolute pixel attributes from getBoundingClientRect, then
- *    restore on cleanup.
- * ──────────────────────────────────────────────────────────────────────────── */
-
+// ─── SVG dimensions ───────────────────────────────────────────────────────────
 function fixSvgDimensions(container) {
-  const restorers = []
-  container.querySelectorAll('svg').forEach((svg) => {
+  const svgs = container.querySelectorAll('svg')
+  const res  = []
+  svgs.forEach((svg) => {
     const rect = svg.getBoundingClientRect()
-    const ow = svg.getAttribute('width')
-    const oh = svg.getAttribute('height')
+    const ow = svg.getAttribute('width'), oh = svg.getAttribute('height')
     if (rect.width > 0 && rect.height > 0) {
       svg.setAttribute('width',  String(rect.width))
       svg.setAttribute('height', String(rect.height))
     }
-    restorers.push(() => {
+    res.push(() => {
       if (ow !== null) svg.setAttribute('width',  ow); else svg.removeAttribute('width')
       if (oh !== null) svg.setAttribute('height', oh); else svg.removeAttribute('height')
     })
   })
-  return () => restorers.forEach((fn) => fn())
+  return () => res.forEach((fn) => fn())
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 6. RENDER WAIT — deterministic, multi-stage
- *    Replaces fragile single-setTimeout with explicit readiness checks.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-async function waitForFonts() {
-  if (document.fonts && typeof document.fonts.ready?.then === 'function') {
-    try { await document.fonts.ready } catch { /* ignore */ }
-  }
-}
-
-async function waitForImages(element) {
-  const images = element.querySelectorAll('img')
-  const tasks  = Array.from(images).map((img) => {
-    if (img.complete && img.naturalWidth > 0) return Promise.resolve()
-    return new Promise((resolve) => {
-      const done = () => {
-        img.removeEventListener('load',  done)
-        img.removeEventListener('error', done)
-        resolve()
-      }
-      img.addEventListener('load',  done)
-      img.addEventListener('error', done)
-      setTimeout(done, 1500)  // per-image safety timeout
-    })
-  })
-  await Promise.all(tasks)
-}
-
-/** Poll until predicate returns true or timeout elapses. */
-async function pollReady(predicate, timeoutMs = RENDER_WAIT_TIMEOUT, intervalMs = 80) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    let ready = false
-    try { ready = predicate() } catch { ready = false }
-    if (ready) return true
-    await new Promise((r) => setTimeout(r, intervalMs))
-  }
-  return false
-}
-
-async function waitForSvgs(element) {
-  await pollReady(() => {
-    const svgs = element.querySelectorAll('svg')
-    if (svgs.length === 0) return true
-    return Array.from(svgs).every((svg) => {
-      const r = svg.getBoundingClientRect()
-      return r.width > 0 && r.height > 0
-    })
-  })
-}
-
-async function waitForCharts(element) {
-  await pollReady(() => {
-    const wrappers = element.querySelectorAll('[data-pdf-chart], .recharts-wrapper')
-    if (wrappers.length === 0) return true
-    return Array.from(wrappers).every((w) => {
-      // Recharts is done when an SVG with non-zero size is mounted inside
-      const svg = w.querySelector('svg')
-      if (!svg) return false
-      const r = svg.getBoundingClientRect()
-      return r.width > 0 && r.height > 0
-    })
-  })
-}
-
-function nextPaint() {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve))
-  })
-}
-
-async function waitForRenderComplete(element) {
-  await waitForFonts()
-  await waitForImages(element)
-  await waitForSvgs(element)
-  await waitForCharts(element)
-  await nextPaint()
-  await new Promise((r) => setTimeout(r, 200))   // final settle
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 7. ATOMIC BLOCK INVENTORY
- *    Identifies blocks that must NOT be split across pages, in CSS pixels
- *    relative to the export root (multiplied by SCALE inside the planner).
- * ──────────────────────────────────────────────────────────────────────────── */
-
-const ATOMIC_SELECTORS = [
-  '[data-pdf-block="diagram"]',
-  '[data-pdf-block="chart"]',
-  '[data-pdf-block="atomic"]',
-  '#mermaid-container',
-  '[data-pdf-chart]',
-  '.recharts-wrapper',
-].join(',')
-
-function getAtomicBlocks(rootElement) {
-  const rootRect = rootElement.getBoundingClientRect()
-  const list = []
-  const seen = new Set()
-
-  rootElement.querySelectorAll(ATOMIC_SELECTORS).forEach((el) => {
-    if (seen.has(el)) return
-    seen.add(el)
-    const rect = el.getBoundingClientRect()
-    if (rect.height <= 0) return
-    list.push({
-      cssTop:    rect.top    - rootRect.top,
-      cssBottom: rect.bottom - rootRect.top,
-      cssHeight: rect.height,
-    })
-  })
-
-  // Sort top-down and remove descendants (a chart inside a section already covers it)
-  list.sort((a, b) => a.cssTop - b.cssTop)
-  const filtered = []
-  for (const b of list) {
-    const containedBy = filtered.find((p) => p.cssTop <= b.cssTop && p.cssBottom >= b.cssBottom)
-    if (!containedBy) filtered.push(b)
-  }
-  return filtered
-}
-
-/** Heading positions — used to prevent orphan headings at page bottom. */
-function getHeadingPositions(rootElement) {
-  const rootRect = rootElement.getBoundingClientRect()
-  const headings = []
-  rootElement.querySelectorAll('h1, h2, h3').forEach((el) => {
-    const r = el.getBoundingClientRect()
-    if (r.height <= 0) return
-    headings.push({ cssTop: r.top - rootRect.top })
-  })
-  return headings.sort((a, b) => a.cssTop - b.cssTop)
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 8. PAGINATION ENGINE
- *    Decides where each page begins and ends in canvas pixels.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-function planPages({ canvasHeight, pageHeightPx, atomic, headings, scale }) {
-  // Convert CSS-px coordinates to canvas-px (account for SCALE)
-  const atomicPx = atomic.map((b) => ({
-    top:    b.cssTop    * scale,
-    bottom: b.cssBottom * scale,
-    height: b.cssHeight * scale,
-  }))
-  const headingPx = headings.map((h) => h.cssTop * scale)
-
-  const pages = []
-  let cursor = 0
-  let safetyCounter = 0
-  const MAX_PAGES = 50  // hard guard against runaway loops
-
-  while (cursor < canvasHeight && safetyCounter < MAX_PAGES) {
-    safetyCounter++
-    let pageEnd = Math.min(cursor + pageHeightPx, canvasHeight)
-
-    // ── Last page: take the remainder ────────────────────────────────────
-    if (pageEnd >= canvasHeight) {
-      pages.push({ startY: cursor, endY: canvasHeight })
-      break
+// ─── Smart page break — find whitest row near target ─────────────────────────
+function findSafeBreak(canvas, targetY, searchPx = 60) {
+  const ctx  = canvas.getContext('2d')
+  const W    = canvas.width
+  const top  = Math.max(0, targetY - searchPx)
+  const len  = Math.min(canvas.height, targetY + searchPx) - top
+  if (len <= 0) return targetY
+  const data = ctx.getImageData(0, top, W, len).data
+  let bestRow = targetY, bestScore = -1
+  const step  = Math.max(1, Math.floor(W / 300))
+  for (let row = 0; row < len; row++) {
+    let white = 0, total = 0
+    for (let x = 0; x < W; x += step) {
+      const i = (row * W + x) * 4
+      if ((data[i] + data[i+1] + data[i+2]) / 3 > 240) white++
+      total++
     }
-
-    // ── Rule 1: never split an atomic block ──────────────────────────────
-    // Find a block that *starts after cursor* but *would be cut* by pageEnd.
-    const splitting = atomicPx.find((b) =>
-      b.top    > cursor   &&
-      b.top    < pageEnd  &&
-      b.bottom > pageEnd
-    )
-
-    if (splitting) {
-      const beforeBlock = splitting.top - ATOMIC_BREAK_GAP
-
-      if (beforeBlock > cursor) {
-        const filledRatio = (beforeBlock - cursor) / pageHeightPx
-        // If breaking before block leaves a reasonably-filled page, do it.
-        // If the page would be very empty, still break (better empty page than
-        // splitting an atomic block).
-        pageEnd = beforeBlock
-      }
-      // else: block starts at/before cursor and is taller than a page —
-      //       must split (rare; mermaid max-height keeps SVGs ≤ 460px).
-    } else {
-      // ── Rule 2: orphan heading prevention ──────────────────────────────
-      // If a heading sits within the last HEADING_GUARD_PX of the page, push
-      // the break up to the heading so it starts the next page.
-      const orphan = headingPx.find((y) =>
-        y > pageEnd - HEADING_GUARD_PX &&
-        y < pageEnd &&
-        y > cursor + pageHeightPx * 0.25       // require ≥25% page already filled
-      )
-      if (orphan != null) {
-        pageEnd = orphan - 4  // small visual gap above heading
-      }
-    }
-
-    // ── Safety: never produce zero / negative page advance ───────────────
-    if (pageEnd <= cursor) {
-      pageEnd = Math.min(cursor + pageHeightPx, canvasHeight)
-    }
-
-    pages.push({ startY: cursor, endY: pageEnd })
-    cursor = pageEnd
+    const score = white / total
+    if (score > bestScore) { bestScore = score; bestRow = top + row }
   }
-
-  return pages
+  return bestRow
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 9. BLANK-PAGE DETECTION
- *    Samples the ENTIRE candidate page (5 stripes), not a corner.
- *    Used only as last-resort guard against truly empty trailing pages.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-function isPageEmpty(canvas, startY, endY) {
+// ─── Blank page detection ─────────────────────────────────────────────────────
+function isPageMostlyEmpty(canvas, startY, endY) {
+  // A page is "empty" if it's under 30px tall, OR if 99%+ pixels are white
   const height = endY - startY
-  if (height < 24) return true   // less than ~24 canvas px = clearly nothing
+  if (height < 30) return true
 
-  const ctx = canvas.getContext('2d')
-  const W   = canvas.width
-
-  const STRIPES  = 5
-  const STRIPE_H = 4
-  let totalSamples = 0
-  let whiteSamples = 0
-
-  for (let s = 0; s < STRIPES; s++) {
-    const denom = STRIPES > 1 ? (STRIPES - 1) : 1
-    const yPos  = Math.max(0,
-      Math.min(canvas.height - STRIPE_H,
-        startY + Math.floor((height - STRIPE_H) * (s / denom))
-      )
-    )
-    let imgData
-    try {
-      imgData = ctx.getImageData(0, yPos, W, STRIPE_H).data
-    } catch {
-      // CORS-tainted canvas — bail to "not empty" to avoid losing real content
-      return false
-    }
-    // Sample every 4th pixel for performance (every 16 bytes)
-    for (let i = 0; i < imgData.length; i += 16) {
-      totalSamples++
-      if (imgData[i] > 248 && imgData[i + 1] > 248 && imgData[i + 2] > 248) {
-        whiteSamples++
-      }
-    }
+  const ctx      = canvas.getContext('2d')
+  const sampleH  = Math.min(height, 80)         // sample first 80px rows
+  const sampleW  = Math.min(canvas.width, 200)   // sample 200px columns
+  const data     = ctx.getImageData(0, startY, sampleW, sampleH).data
+  let whiteCount = 0
+  const total    = data.length / 4
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] > 248 && data[i+1] > 248 && data[i+2] > 248) whiteCount++
   }
-  return (whiteSamples / totalSamples) > 0.995  // >99.5% white = truly empty
+  return (whiteCount / total) > 0.985
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 10. CANVAS UTILITIES
- * ──────────────────────────────────────────────────────────────────────────── */
-
+// ─── Canvas crop ──────────────────────────────────────────────────────────────
 function cropCanvas(src, startY, endY) {
-  const h = Math.max(1, endY - startY)
+  const h = endY - startY
   const c = document.createElement('canvas')
-  c.width = src.width
-  c.height = h
+  c.width = src.width; c.height = h
   c.getContext('2d').drawImage(src, 0, startY, src.width, h, 0, 0, src.width, h)
   return c
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 11. HEADER & FOOTER
- *     Footer occupies the reserved FOOTER_H_MM zone — content image height
- *     is always ≤ CONTENT_H_MM, so there is no possibility of overlap.
- * ──────────────────────────────────────────────────────────────────────────── */
-
+// ─── Header injection ─────────────────────────────────────────────────────────
 function injectHeader(container, topic) {
   const el = document.createElement('div')
   el.id = '__pdf_hdr__'
@@ -737,12 +550,16 @@ function injectHeader(container, topic) {
   return () => el.remove()
 }
 
-function drawFooter(pdf, n, total) {
-  // White block over reserved footer zone (covers any tiny canvas overflow)
+// ─── Footer renderer ──────────────────────────────────────────────────────────
+// The footer occupies the bottom FOOTER_H_MM of each A4 page.
+// Content images are placed from y=0 and sized to CONTENT_H_MM max,
+// so content never reaches the footer zone.
+function addFooter(pdf, n, total) {
+  // White background block over footer zone
   pdf.setFillColor(255, 255, 255)
   pdf.rect(0, A4_H_MM - FOOTER_H_MM, A4_W_MM, FOOTER_H_MM, 'F')
 
-  // Separator line — 9.5mm from bottom
+  // Separator line — sits 10mm from bottom
   pdf.setDrawColor(99, 102, 241)
   pdf.setLineWidth(0.35)
   pdf.line(10, A4_H_MM - 9.5, A4_W_MM - 10, A4_H_MM - 9.5)
@@ -759,118 +576,112 @@ function drawFooter(pdf, n, total) {
   pdf.text('Page ' + n + ' / ' + total, A4_W_MM - 28, A4_H_MM - 4.5)
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 12. PUBLIC API: exportToPdf(element, filename, topic)
- * ──────────────────────────────────────────────────────────────────────────── */
-
-let __exportInFlight = false  // export lock — prevents double-clicks colliding
-
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
 export async function exportToPdf(element, filename = 'ExamCraft', topic = '') {
-  if (!element) throw new Error('exportToPdf: element is required')
-  if (__exportInFlight) return    // silently ignore concurrent calls
-  __exportInFlight = true
+  const [h2c, jpdf] = await Promise.all([import('html2canvas'), import('jspdf')])
+  const html2canvas  = h2c.default
+  const { jsPDF }    = jpdf
 
-  try {
-    // Lazy-load heavy deps so they don't bloat the initial bundle
-    const [h2c, jpdf] = await Promise.all([import('html2canvas'), import('jspdf')])
-    const html2canvas = h2c.default
-    const { jsPDF }   = jpdf
-
-    // Snapshot original inline styles for restoration
-    const orig = {
-      background: element.style.background,
-      padding:    element.style.padding,
-      width:      element.style.width,
-      minWidth:   element.style.minWidth,
-      maxWidth:   element.style.maxWidth,
-      boxSizing:  element.style.boxSizing,
-    }
-
-    // Lock the export container to a stable, viewport-independent width so
-    // capture is identical on mobile, tablet, desktop, and CI.
-    element.style.background = '#ffffff'
-    element.style.padding    = '24px'
-    element.style.width      = CAPTURE_WIDTH + 'px'
-    element.style.minWidth   = CAPTURE_WIDTH + 'px'
-    element.style.maxWidth   = CAPTURE_WIDTH + 'px'
-    element.style.boxSizing  = 'border-box'
-
-    // Apply pre-capture transformations
-    const removeHeader  = injectHeader(element, topic)
-    const restoreVars   = injectCssVariableOverrides()
-    const restoreGCS    = patchGetComputedStyle()
-    const restoreStyles = patchLiveStyles()
-
-    // Wait for everything to be visually complete BEFORE we measure or capture
-    await waitForRenderComplete(element)
-
-    // Freeze SVG dimensions AFTER render wait (so getBoundingClientRect is real)
-    const restoreSvgs = fixSvgDimensions(element)
-
-    // Inventory atomic blocks & headings while DOM still has live geometry
-    const atomic   = getAtomicBlocks(element)
-    const headings = getHeadingPositions(element)
-
-    let canvas
-    try {
-      canvas = await html2canvas(element, {
-        scale:           SCALE,
-        useCORS:         true,
-        allowTaint:      true,
-        backgroundColor: '#ffffff',
-        logging:         false,
-        windowWidth:     CAPTURE_WIDTH + 48,
-        x: 0, y: 0,
-        width:  element.scrollWidth,
-        height: element.scrollHeight,
-        onclone: (d) => patchClone(d, CAPTURE_WIDTH),
-      })
-    } finally {
-      // Always restore — even on capture failure
-      removeHeader()
-      restoreSvgs()
-      restoreVars()
-      restoreGCS()
-      restoreStyles()
-      Object.assign(element.style, orig)
-    }
-
-    // ── Plan pages using atomic-block-aware engine ──────────────────────────
-    const pageHeightPx = Math.round((CONTENT_H_MM / A4_W_MM) * canvas.width)
-
-    let pages = planPages({
-      canvasHeight: canvas.height,
-      pageHeightPx,
-      atomic,
-      headings,
-      scale: SCALE,
-    })
-
-    // ── Filter out provably empty pages (full-page sample, not corner) ──────
-    pages = pages.filter(({ startY, endY }) => !isPageEmpty(canvas, startY, endY))
-
-    // Failsafe: at least one page
-    if (pages.length === 0) pages = [{ startY: 0, endY: canvas.height }]
-
-    // ── Build the PDF ───────────────────────────────────────────────────────
-    const pdf = new jsPDF('p', 'mm', 'a4')
-
-    pages.forEach(({ startY, endY }, i) => {
-      if (i > 0) pdf.addPage()
-
-      const strip = cropCanvas(canvas, startY, endY)
-      const data  = strip.toDataURL('image/png', 1.0)
-
-      // Strip height in mm — clamped to CONTENT_H_MM so it can NEVER overlap footer.
-      const naturalHmm = (strip.height * A4_W_MM) / canvas.width
-      const placedHmm  = Math.min(naturalHmm, CONTENT_H_MM)
-
-      pdf.addImage(data, 'PNG', 0, 0, A4_W_MM, placedHmm, '', 'FAST')
-      drawFooter(pdf, i + 1, pages.length)
-    })
-
-    pdf.save(filename + '-' + Date.now() + '.pdf')
-  } finally {
-    __exportInFlight = false
+  const orig = {
+    background: element.style.background,
+    padding:    element.style.padding,
+    width:      element.style.width,
+    minWidth:   element.style.minWidth,
+    maxWidth:   element.style.maxWidth,
+    boxSizing:  element.style.boxSizing,
   }
+
+  element.style.background = '#ffffff'
+  element.style.padding    = '24px'
+  element.style.width      = CAPTURE_WIDTH + 'px'
+  element.style.minWidth   = CAPTURE_WIDTH + 'px'
+  element.style.maxWidth   = CAPTURE_WIDTH + 'px'
+  element.style.boxSizing  = 'border-box'
+
+  const removeHeader  = injectHeader(element, topic)
+  const restoreSvgs   = fixSvgDimensions(element)
+  const restoreVars   = injectCssVariableOverrides()
+  const restoreGCS    = patchGetComputedStyle()
+  const restoreStyles = patchLiveStyles()
+
+  // Wait for Recharts + Mermaid to fully paint
+  await new Promise((r) => setTimeout(r, 450))
+
+  let canvas
+  try {
+    canvas = await html2canvas(element, {
+      scale:           SCALE,
+      useCORS:         true,
+      allowTaint:      true,
+      backgroundColor: '#ffffff',
+      logging:         false,
+      windowWidth:     CAPTURE_WIDTH + 48,
+      x: 0, y: 0,
+      width:  element.scrollWidth,
+      height: element.scrollHeight,
+      onclone: (d) => patchClone(d, CAPTURE_WIDTH),
+    })
+  } finally {
+    removeHeader(); restoreSvgs(); restoreVars(); restoreGCS(); restoreStyles()
+    Object.assign(element.style, orig)
+  }
+
+  // ── Page height in canvas pixels — based on CONTENT area only ──
+  // KEY FIX: use CONTENT_H_MM (not A4_H_MM) so content never
+  // reaches the footer zone. Footer sits safely below content.
+  const pageH = Math.round((CONTENT_H_MM / A4_W_MM) * canvas.width)
+
+  const rawPages = []
+  let startY = 0
+
+  while (startY < canvas.height) {
+    let endY = Math.min(startY + pageH, canvas.height)
+    if (endY < canvas.height) {
+      // Search ±80px for a clean white break row
+      const safeY = findSafeBreak(canvas, endY, 80)
+      // Only use safe break if it's within a reasonable range
+      // Prevents findSafeBreak from eating too much content (causing empty pages)
+      if (safeY > startY && (safeY - startY) <= pageH * 1.05) {
+        endY = safeY
+      }
+    }
+    // Guard: never create a zero-height page
+    if (endY <= startY) endY = Math.min(startY + pageH, canvas.height)
+    rawPages.push({ startY, endY })
+    startY = endY
+  }
+
+  // ── Filter out blank/empty pages ──────────────────────────────────────────
+  // This removes the trailing blank page that can appear when
+  // findSafeBreak creates a tiny leftover strip at the end.
+  const pages = rawPages.filter(({ startY: s, endY: e }) =>
+    !isPageMostlyEmpty(canvas, s, e)
+  )
+
+  // Safety: always keep at least one page
+  if (pages.length === 0 && rawPages.length > 0) pages.push(rawPages[0])
+
+  // ── Build PDF ─────────────────────────────────────────────────────────────
+  const pdf = new jsPDF('p', 'mm', 'a4')
+
+  pages.forEach(({ startY: s, endY: e }, i) => {
+    if (i > 0) pdf.addPage()
+
+    const strip = cropCanvas(canvas, s, e)
+    const data  = strip.toDataURL('image/png', 1.0)
+
+    // Image height in mm — will always be ≤ CONTENT_H_MM
+    // because strip height ≤ pageH canvas pixels
+    const hMM = (strip.height * A4_W_MM) / canvas.width
+
+    // Place content image from top — capped at CONTENT_H_MM
+    pdf.addImage(data, 'PNG', 0, 0, A4_W_MM, Math.min(hMM, CONTENT_H_MM), '', 'FAST')
+
+    // Footer drawn in reserved zone below CONTENT_H_MM
+    addFooter(pdf, i + 1, pages.length)
+  })
+
+  pdf.save(filename + '-' + Date.now() + '.pdf')
 }
