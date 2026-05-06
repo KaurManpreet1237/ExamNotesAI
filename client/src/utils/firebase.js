@@ -3,11 +3,11 @@ import {getAuth, GoogleAuthProvider} from "firebase/auth"
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_APIKEY,
-  authDomain: "authexamcraft.firebaseapp.com",
-  projectId: "authexamcraft",
-  storageBucket: "authexamcraft.firebasestorage.app",
-  messagingSenderId: "752709211875",
-  appId: "1:752709211875:web:90617b231446a7e0b4d7d6"
+  authDomain: "examcraft-login.firebaseapp.com",
+  projectId: "examcraft-login",
+  storageBucket: "examcraft-login.firebasestorage.app",
+  messagingSenderId: "702477620752",
+  appId: "1:702477620752:web:22e11f179cfa79319d5c95"
 };
 
 
