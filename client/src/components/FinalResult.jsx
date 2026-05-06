@@ -18,25 +18,19 @@ const mdComponents = {
   h3: ({ children }) => (
     <h3 className="text-lg font-semibold text-gray-800 mt-4 mb-2">{children}</h3>
   ),
-  p: ({ children }) => (
-    <p className="text-gray-700 leading-relaxed mb-3">{children}</p>
-  ),
-  ul: ({ children }) => (
-    <ul className="list-disc ml-6 space-y-1.5 text-gray-700">{children}</ul>
-  ),
-  li: ({ children }) => (
-    <li className="marker:text-indigo-500">{children}</li>
-  ),
+  p:  ({ children }) => <p className="text-gray-700 leading-relaxed mb-3">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc ml-6 space-y-1.5 text-gray-700">{children}</ul>,
+  li: ({ children }) => <li className="marker:text-indigo-500">{children}</li>,
 }
 
 // ─── Section header ───────────────────────────────────────────────────────────
 function SectionHeader({ icon, title, color }) {
   const palette = {
-    indigo: "from-indigo-100 to-indigo-50 text-indigo-700",
-    purple: "from-purple-100 to-purple-50 text-purple-700",
-    green:  "from-green-100  to-green-50  text-green-700",
-    cyan:   "from-cyan-100   to-cyan-50   text-cyan-700",
-    rose:   "from-rose-100   to-rose-50   text-rose-700",
+    indigo: 'from-indigo-100 to-indigo-50 text-indigo-700',
+    purple: 'from-purple-100 to-purple-50 text-purple-700',
+    green:  'from-green-100  to-green-50  text-green-700',
+    cyan:   'from-cyan-100   to-cyan-50   text-cyan-700',
+    rose:   'from-rose-100   to-rose-50   text-rose-700',
   }
   return (
     <div className={`mb-4 px-4 py-2.5 rounded-xl
@@ -50,10 +44,10 @@ function SectionHeader({ icon, title, color }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 function FinalResult({ result }) {
-  const contentRef     = useRef(null)
-  const [quickRev, setQuickRev] = useState(false)
-  const [downloading,  setDL]   = useState(false)
-  const [dlError,      setErr]  = useState("")
+  const contentRef = useRef(null)
+  const [quickRev, setQuickRev]   = useState(false)
+  const [downloading, setDL]      = useState(false)
+  const [dlError, setErr]         = useState('')
 
   if (
     !result ||
@@ -62,54 +56,57 @@ function FinalResult({ result }) {
     !result.revisionPoints
   ) return null
 
-  // Extract topic name from notes for the PDF header
-  const topicMatch = (result.notes || "").match(/^#+\s+(.+)/m)
-  const topicName  = topicMatch ? topicMatch[1].replace(/[#*]/g, "").trim() : "Study Notes"
+  // Extract topic from notes heading for the PDF header label
+  const topicMatch = (result.notes || '').match(/^#+\s+(.+)/m)
+  const topicName  = topicMatch ? topicMatch[1].replace(/[#*]/g, '').trim() : 'Study Notes'
 
   const handleDownload = async () => {
     if (!contentRef.current) return
     setDL(true)
-    setErr("")
+    setErr('')
     try {
-      // Give Recharts / Mermaid an extra moment to fully paint before capture
+      // Short settle: ensures Recharts/Mermaid fully paint before capture
       await new Promise((r) => setTimeout(r, 300))
-      await exportToPdf(contentRef.current, "ExamCraft", topicName)
+      await exportToPdf(contentRef.current, 'ExamCraft', topicName)
     } catch (e) {
-      console.error("PDF export error:", e)
-      setErr("Download failed. Please try again.")
+      console.error('PDF export error:', e)
+      setErr('Download failed. Please try again.')
     } finally {
       setDL(false)
     }
   }
 
   return (
-    // contentRef wraps EVERYTHING that should appear in the PDF
+    // contentRef — everything inside here is captured for the PDF
     <div ref={contentRef} className="mt-4 p-3 sm:p-4 space-y-8 bg-white">
 
-      {/* ── Header row ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl sm:text-3xl font-bold
-          bg-gradient-to-r from-indigo-600 to-purple-600
-          bg-clip-text text-transparent">
+      {/*
+        data-pdf-hide — exportPdf.js finds this in onclone and sets display:none.
+        This means the buttons are VISIBLE to the user but HIDDEN in the PDF capture.
+        ──────────────────────────────────────────────────────────────────────────
+      */}
+      <div data-pdf-hide className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {/* Page title — plain text, no gradient clip (which html2canvas breaks) */}
+        <h2 className="text-2xl sm:text-3xl font-bold text-indigo-700">
           📘 Generated Notes
         </h2>
 
         <div className="flex flex-wrap gap-3">
-          {/* Quick revision toggle */}
+          {/* Quick Revision toggle */}
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => setQuickRev(!quickRev)}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all
               ${quickRev
-                ? "bg-green-600 text-white shadow-[0_4px_14px_rgba(34,197,94,0.35)]"
-                : "bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
+                ? 'bg-green-600 text-white shadow-[0_4px_14px_rgba(34,197,94,0.35)]'
+                : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
               }`}
           >
-            {quickRev ? "✓ Exit Revision" : "⚡ Quick Revision"}
+            {quickRev ? '✓ Exit Revision' : '⚡ Quick Revision'}
           </motion.button>
 
-          {/* Download PDF */}
+          {/* Download button */}
           <div>
             <motion.button
               whileHover={{ scale: downloading ? 1 : 1.03 }}
@@ -119,8 +116,8 @@ function FinalResult({ result }) {
               className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold
                 transition-all duration-200
                 ${downloading
-                  ? "bg-indigo-300 cursor-not-allowed text-white"
-                  : "bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:opacity-90 shadow-[0_4px_14px_rgba(99,102,241,0.4)]"
+                  ? 'bg-indigo-300 cursor-not-allowed text-white'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:opacity-90 shadow-[0_4px_14px_rgba(99,102,241,0.4)]'
                 }`}
             >
               {downloading ? (
@@ -140,7 +137,7 @@ function FinalResult({ result }) {
         </div>
       </div>
 
-      {/* ── Sub Topics ── */}
+      {/* ── Sub Topics ── (included in PDF) */}
       {!quickRev && (
         <section>
           <SectionHeader icon="⭐" title="Sub Topics by Priority" color="indigo" />
@@ -150,8 +147,8 @@ function FinalResult({ result }) {
                 <span className="font-semibold text-indigo-600">{star}</span>
                 <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200
                   rounded-full px-2.5 py-0.5">
-                  {star.includes("⭐⭐⭐") ? "Frequently Asked"
-                   : star.includes("⭐⭐") ? "Important" : "Standard"}
+                  {star.includes('⭐⭐⭐') ? 'Frequently Asked'
+                   : star.includes('⭐⭐') ? 'Important' : 'Standard'}
                 </span>
               </div>
               <ul className="list-disc ml-6 text-gray-700 space-y-1">
@@ -169,9 +166,7 @@ function FinalResult({ result }) {
         <section>
           <SectionHeader icon="📝" title="Detailed Notes" color="purple" />
           <div className="bg-white border border-gray-100 rounded-2xl p-5 sm:p-6 shadow-sm">
-            <ReactMarkdown components={mdComponents}>
-              {result.notes}
-            </ReactMarkdown>
+            <ReactMarkdown components={mdComponents}>{result.notes}</ReactMarkdown>
           </div>
         </section>
       )}
@@ -180,14 +175,11 @@ function FinalResult({ result }) {
       {quickRev && (
         <section className="rounded-2xl bg-gradient-to-br from-green-50 to-emerald-50
           border border-green-200 p-5 sm:p-6">
-          <h3 className="font-bold text-green-700 mb-4 text-lg flex items-center gap-2">
-            ⚡ Exam Quick Revision Points
-          </h3>
+          <h3 className="font-bold text-green-700 mb-4 text-lg">⚡ Quick Revision Points</h3>
           <ul className="space-y-2 text-gray-800">
             {result.revisionPoints.map((p, i) => (
               <li key={i} className="flex items-start gap-2.5">
-                <span className="text-green-500 mt-0.5 text-sm shrink-0">✓</span>
-                {p}
+                <span className="text-green-500 mt-0.5 shrink-0">✓</span>{p}
               </li>
             ))}
           </ul>
@@ -198,10 +190,6 @@ function FinalResult({ result }) {
       {result.diagram?.data && (
         <section>
           <SectionHeader icon="📊" title="Diagram" color="cyan" />
-          {/*
-            id="mermaid-container" is still set inside MermaidSetup.
-            For html2canvas capture we just need it visible in the DOM.
-          */}
           <MermaidSetup diagram={result.diagram.data} />
         </section>
       )}
@@ -210,10 +198,6 @@ function FinalResult({ result }) {
       {result.charts?.length > 0 && (
         <section>
           <SectionHeader icon="📈" title="Visual Charts" color="indigo" />
-          {/*
-            RechartSetUp uses explicit pixel height (288px) so the
-            ResponsiveContainer always gets a non-zero bounding box.
-          */}
           <RechartSetUp charts={result.charts} />
         </section>
       )}
