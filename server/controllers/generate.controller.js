@@ -128,11 +128,16 @@ export const generateNotes = async (req, res) => {
       });
     }
 
-    if (error.message.includes("429") || error.message.includes("quota")) {
+    if (
+      error.message.includes("DAILY_QUOTA_EXHAUSTED") ||
+      error.message.includes("QUOTA_EXCEEDED") ||
+      error.message.includes("429") ||
+      error.message.includes("quota")
+    ) {
       return res.status(429).json({
-        error: "AI_RATE_LIMITED",
+        error: "AI_QUOTA_EXHAUSTED",
         message:
-          "Too many requests. Please wait a minute and try again.",
+          "Daily AI generation limit reached across all models. Free-tier quota resets at midnight (Pacific Time). Please try again later.",
       });
     }
 

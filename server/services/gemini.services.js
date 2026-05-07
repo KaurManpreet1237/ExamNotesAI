@@ -1,13 +1,39 @@
+// Model fallback chain — tried in order.
+// When one model's free-tier daily quota (RPD) is exhausted,
+// the service automatically falls over to the next model.
+// On free tier each model has 20 RPD, so this gives up to 60 RPD total.
+//
+// Override the primary model via GEMINI_MODEL env var.
+// Override the full chain via GEMINI_MODELS (comma-separated), e.g.:
+//   GEMINI_MODELS=gemini-2.5-flash,gemini-2.0-flash,gemini-1.5-flash
+const DEFAULT_MODEL_CHAIN = [
+  "gemini-2.5-flash",          // Gemini 2.5 Flash — fresh quota, shown in your AI Studio
+  "gemini-2.0-flash",          // Gemini 2.0 Flash — stable fallback
+  "gemini-1.5-flash",          // Gemini 1.5 Flash — final safety net
+];
 
-// Stable model — configurable via GEMINI_MODEL env var so you can
-// switch to a preview without changing code.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+function getModelChain() {
+  if (process.env.GEMINI_MODELS) {
+    return process.env.GEMINI_MODELS.split(",").map((m) => m.trim()).filter(Boolean);
+  }
+  if (process.env.GEMINI_MODEL) {
+    // Single override: put it first, keep the rest as fallbacks
+    const primary = process.env.GEMINI_MODEL.trim();
+    const rest = DEFAULT_MODEL_CHAIN.filter((m) => m !== primary);
+    return [primary, ...rest];
+  }
+  return DEFAULT_MODEL_CHAIN;
+}
+
 const GEMINI_BASE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 
-// Stay under Render's 60 s request timeout
+// 55 s — stays under Render's 60 s request timeout
 const FETCH_TIMEOUT_MS = 55000;
-const MAX_RETRIES = 3;
+
+// Retries per model for transient errors (503, 500, timeout)
+// 429 quota errors are NOT retried — we switch model immediately.
+const TRANSIENT_RETRIES = 2;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,7 +49,6 @@ async function fetchWithTimeout(url, options) {
   }
 }
 
-// Strips markdown code fences and extracts the first valid JSON object
 function safeParseJson(raw) {
   const clean = raw
     .replace(/```json\s*/gi, "")
@@ -44,24 +69,13 @@ function safeParseJson(raw) {
   }
 }
 
-export const generateGeminiResponse = async (prompt) => {
-  const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+// Try a single model with retry on transient errors only (not quota errors)
+async function tryModel(model, requestBody) {
+  const url = `${GEMINI_BASE_URL}/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
-  const requestBody = JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 8192,
-    },
-  });
-
-  let lastError;
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= TRANSIENT_RETRIES; attempt++) {
     try {
-      console.log(
-        `[Gemini] Attempt ${attempt}/${MAX_RETRIES} — model: ${GEMINI_MODEL}`
-      );
+      console.log(`[Gemini] model=${model} attempt=${attempt}/${TRANSIENT_RETRIES}`);
 
       const response = await fetchWithTimeout(url, {
         method: "POST",
@@ -71,25 +85,25 @@ export const generateGeminiResponse = async (prompt) => {
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "");
-        const isRetryable = [429, 500, 503].includes(response.status);
 
-        console.error(
-          `[Gemini] HTTP ${response.status} on attempt ${attempt}: ${errText.slice(0, 300)}`
-        );
+        // 429 = quota exceeded — do NOT retry this model, signal caller to try next
+        if (response.status === 429) {
+          console.warn(`[Gemini] model=${model} QUOTA EXCEEDED (429) — switching to next model`);
+          const err = new Error(`QUOTA_EXCEEDED:${model}`);
+          err.isQuotaError = true;
+          throw err;
+        }
 
-        if (isRetryable && attempt < MAX_RETRIES) {
-          const delay = Math.pow(2, attempt) * 1500; // 3 s, 6 s
-          console.log(`[Gemini] Retrying in ${delay}ms…`);
-          await sleep(delay);
-          lastError = new Error(
-            `Gemini API returned ${response.status}: ${errText.slice(0, 200)}`
-          );
+        // 503 / 500 — transient, may retry
+        const isTransient = [500, 503].includes(response.status);
+        console.error(`[Gemini] model=${model} HTTP ${response.status} attempt ${attempt}: ${errText.slice(0, 200)}`);
+
+        if (isTransient && attempt < TRANSIENT_RETRIES) {
+          await sleep(Math.pow(2, attempt) * 1500);
           continue;
         }
 
-        throw new Error(
-          `Gemini API returned ${response.status}: ${errText.slice(0, 300)}`
-        );
+        throw new Error(`Gemini HTTP ${response.status}: ${errText.slice(0, 200)}`);
       }
 
       const data = await response.json();
@@ -100,50 +114,75 @@ export const generateGeminiResponse = async (prompt) => {
           data?.candidates?.[0]?.finishReason ||
           data?.promptFeedback?.blockReason ||
           "unknown";
-        console.error(
-          `[Gemini] Empty content — finishReason: ${reason}`,
-          JSON.stringify(data).slice(0, 400)
-        );
+        console.error(`[Gemini] model=${model} empty content (reason: ${reason})`);
         throw new Error(`Gemini returned empty content (reason: ${reason})`);
       }
 
       const parsed = safeParseJson(text);
-      console.log(`[Gemini] Success on attempt ${attempt}`);
+      console.log(`[Gemini] model=${model} success on attempt ${attempt}`);
       return parsed;
+
     } catch (err) {
-      lastError = err;
+      // Quota errors bubble up immediately — don't retry
+      if (err.isQuotaError) throw err;
 
       // Timeout
       if (err.name === "AbortError") {
-        console.error(
-          `[Gemini] Request timed out on attempt ${attempt} after ${FETCH_TIMEOUT_MS}ms`
-        );
-        if (attempt < MAX_RETRIES) {
+        console.error(`[Gemini] model=${model} timed out after ${FETCH_TIMEOUT_MS}ms`);
+        if (attempt < TRANSIENT_RETRIES) {
           await sleep(Math.pow(2, attempt) * 1500);
           continue;
         }
-        throw new Error(
-          `Gemini request timed out after ${FETCH_TIMEOUT_MS / 1000}s`
-        );
+        throw new Error(`Gemini timeout after ${FETCH_TIMEOUT_MS / 1000}s`);
       }
 
-      // JSON parse error — no point retrying, bad data
-      if (err instanceof SyntaxError || err.message.includes("parse")) {
-        console.error("[Gemini] Parse error:", err.message);
-        throw err;
-      }
+      // JSON parse error — no retry
+      if (err.message.includes("parse")) throw err;
 
-      // Other retryable errors
-      if (attempt < MAX_RETRIES) {
-        const delay = Math.pow(2, attempt) * 1500;
-        console.warn(
-          `[Gemini] Attempt ${attempt} failed: ${err.message}. Retrying in ${delay}ms…`
-        );
-        await sleep(delay);
+      if (attempt < TRANSIENT_RETRIES) {
+        await sleep(Math.pow(2, attempt) * 1500);
         continue;
       }
+      throw err;
+    }
+  }
+}
+
+export const generateGeminiResponse = async (prompt) => {
+  const chain = getModelChain();
+
+  const requestBody = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 8192,
+    },
+  });
+
+  const quotaExhaustedModels = [];
+
+  for (const model of chain) {
+    try {
+      return await tryModel(model, requestBody);
+    } catch (err) {
+      if (err.isQuotaError) {
+        // This model's daily quota is exhausted — try the next one
+        quotaExhaustedModels.push(model);
+        if (quotaExhaustedModels.length < chain.length) {
+          console.log(`[Gemini] Falling over to next model… (${quotaExhaustedModels.length}/${chain.length} exhausted)`);
+          continue;
+        }
+        // All models exhausted
+        console.error(`[Gemini] All models quota-exhausted: ${chain.join(", ")}`);
+        throw new Error(
+          `DAILY_QUOTA_EXHAUSTED: All Gemini models (${chain.join(", ")}) have hit their free-tier daily limit. ` +
+          `Please wait until midnight (Pacific Time) for the quota to reset, or upgrade your Google AI plan.`
+        );
+      }
+      // Non-quota error from last model in chain — propagate
+      throw err;
     }
   }
 
-  throw lastError || new Error("Gemini API failed after all retries");
+  throw new Error("Gemini: no models available");
 };
