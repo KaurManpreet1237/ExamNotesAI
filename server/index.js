@@ -67,6 +67,33 @@ app.use("/api/pdf",    pdfRouter);
 app.use("/api/credit", creditRouter);
 app.use("/api/admin",  adminRouter);
 
+// ─── Global error middleware ──────────────────────────────────────────────────
+// Must be defined AFTER all routes. Catches any error passed via next(err).
+app.use((err, req, res, next) => {
+  console.error("[Server] Unhandled express error:", err.message);
+  if (!res.headersSent) {
+    res.status(err.status || 500).json({
+      error: "SERVER_ERROR",
+      message: err.message || "Internal server error",
+    });
+  }
+});
+
+// ─── Process-level crash guards ───────────────────────────────────────────────
+// Prevents the Node process from silently dying on Render when an async
+// handler throws outside of express error middleware.
+process.on("uncaughtException", (err) => {
+  console.error("[Server] Uncaught exception:", err.message, err.stack);
+  // Give in-flight requests 1 s to finish, then exit so Render restarts us.
+  setTimeout(() => process.exit(1), 1000);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[Server] Unhandled promise rejection:", reason);
+  // Do NOT exit here — one bad promise shouldn't kill all traffic.
+  // Log it so we can trace it, then continue.
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`🌐 Allowed origins: ${ALLOWED_ORIGINS.join(", ")}`);

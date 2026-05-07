@@ -23,32 +23,41 @@ function TopicForm({ setResult, setLoading, loading, setError }) {
     setLoading(true)
     setResult(null)
     try {
-
-      const result = await generateNotes({topic,
+      const result = await generateNotes({
+        topic,
         classLevel,
         examType,
         revisionMode,
         includeDiagram,
-        includeChart})
-        setResult(result.data)
-        setLoading(false)
-        setClassLevel("")
-        setTopic("")
-        setExamType("")
-        setIncludeChart(false)
-        setRevisionMode(false)
-        setIncludeDiagram(false)
+        includeChart,
+      });
 
-        if(typeof result.creditsLeft === "number"){
-          dispatch(updateCredits(result.creditsLeft));
+      // Guard against unexpected server responses
+      if (!result || !result.data) {
+        throw new Error("Received an empty response from the server. Please try again.");
+      }
 
-        }
+      setResult(result.data);
+      setLoading(false);
+      setClassLevel("");
+      setTopic("");
+      setExamType("");
+      setIncludeChart(false);
+      setRevisionMode(false);
+      setIncludeDiagram(false);
 
-
+      if (typeof result.creditsLeft === "number") {
+        dispatch(updateCredits(result.creditsLeft));
+      }
     } catch (error) {
-   console.log(error)
-   setError("Failed to fetch notes from server");
-      setLoading(false)
+      console.error("[TopicForm] generateNotes failed:", error);
+      // Extract the most meaningful message from Axios or our server
+      const msg =
+        error?.response?.data?.message ||
+        error?.message ||
+        "Failed to generate notes. Please try again.";
+      setError(msg);
+      setLoading(false);
     }
   }
 
